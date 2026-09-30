@@ -1,0 +1,6 @@
+{
+  "name": "Pionex × Binance Funding Arbitrage Engine & Spec v0.1",
+  "description": "Unified common schema, ±2m settlement kline & volume analysis, and quantitative net PnL research simulator for Pionex and Binance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
