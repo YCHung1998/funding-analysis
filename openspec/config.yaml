@@ -35,4 +35,4 @@ rules:
     - Keep a change at ~12 tasks or fewer; otherwise split into two proposals.
     - Write a failing test before each formula / state-machine task (fail-then-pass evidence).
     - When migrating a legacy type, add characterization tests first; lint, build and test must stay green after every task (spec §2.1).
-    - Final task: npm run lint && npm run build && npm test, then update HANDOFF §7.
+    - "Final task — run npm run lint, npm run build, npm test; then update HANDOFF §7."
