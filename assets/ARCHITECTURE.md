@@ -70,7 +70,7 @@ flowchart LR
 | M5. 60s Execution Flow | `ExecutionSimulator` | mock → arbitrageEngine |
 | M6/M7. Dry-Run & Risk Console | `DryRunConsole` | `/api/market/live-scan`、funnelScanner → dryRunEngine |
 | Local Secret Vault | `LocalSecretsView` | localStorage |
-| System Spec v0.2 | `SpecViewer` | `src/spec/arbitrageSpecV01.ts` |
+| System Spec v0.1 | `SpecViewer` | `src/spec/arbitrageSpecV01.ts` |
 
 ## 3. 型別（兩套並存，見 HANDOFF P10）
 

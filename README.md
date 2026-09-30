@@ -8,6 +8,8 @@
 
 接手開發請先讀 👉 [`assets/HANDOFF.md`](assets/HANDOFF.md)　·　架構圖 👉 [`assets/ARCHITECTURE.md`](assets/ARCHITECTURE.md)
 
+下一階段（Paper Trading）規格 👉 [`docs/TRADING_SYSTEM_SPEC.md`](docs/TRADING_SYSTEM_SPEC.md)　·　開發技術書 👉 [`docs/PAPER_TRADING_TECH_SPEC.md`](docs/PAPER_TRADING_TECH_SPEC.md)
+
 ---
 
 ## 1. 策略在做什麼（30 秒版）

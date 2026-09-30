@@ -155,7 +155,7 @@ const HELP_DICTIONARY: Record<ActiveTab, PageHelpContent> = {
     apiKeyNote: '公開市場掃描不需任何 API Key；只有實盤下單、保證金檢查與帳戶倉位監控需要私有 Key。',
   },
   spec: {
-    title: 'System Spec v0.2 (規格庫與未來備忘錄)',
+    title: 'System Spec v0.1 (規格庫與未來備忘錄)',
     moduleTag: 'SPECIFICATION KNOWLEDGE BASE',
     purpose: '永久固化 7 大模組規格定義、公式手冊，並提供本機持久化的未來版本備忘錄（逐步記憶擴充庫）。',
     howToUse: [
@@ -284,7 +284,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose, activeTab
         {/* Footer */}
         <div className="p-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between text-xs font-mono">
           <span className="text-slate-500 text-[11px]">
-            Pionex × Binance Funding Arbitrage Specification v0.2
+            Pionex × Binance Funding Arbitrage Specification v0.1
           </span>
           <button
             onClick={onClose}

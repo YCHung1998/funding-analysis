@@ -4,6 +4,7 @@
 > 使用者導向的說明在 [`../README.md`](../README.md)；本檔講「怎麼接著做、不能踩什麼」。
 > 先看架構圖：[`ARCHITECTURE.md`](ARCHITECTURE.md)。
 > 詳細問題清單（25 個，含實測與參考）：[`../issue/README.md`](../issue/README.md)。
+> 下一階段規格：[`../docs/TRADING_SYSTEM_SPEC.md`](../docs/TRADING_SYSTEM_SPEC.md)（Paper Trading v0.2，What）＋ [`../docs/PAPER_TRADING_TECH_SPEC.md`](../docs/PAPER_TRADING_TECH_SPEC.md)（開發技術書，How）。**兩份文件中標 ⚠️ 待決 C-xx 的段落，決定前不得實作。**
 
 - 最後更新：2026-09-30
 - 基準 commit：`95535ca`（GitHub `main` 與本地 `funding` 分支相同）
@@ -28,13 +29,15 @@ curl -s localhost:3000/api/market/live-scan | head -c 300   # 應回 success:tru
 
 **目標**：低風險跨交易所資金費率套利——同幣種、兩所對沖（低費率做多 / 高費率做空），領取費率差。
 
-**階段**（目前在 ① → ② 之間）：
+**階段**（2026-09-30 依規格書 v0.2 §1.1 / C-04 改為五階段；目前在 ① → ③ 的前置工作）：
 
 | 階段 | 內容 | 狀態 |
 |------|------|------|
-| ① Research | 即時掃描 + 歷史/結算窗口分析 + 獲利邊界 | 🟡 掃描可用，歷史資料為 mock |
-| ② Dry-run | 用真實行情跑完整下單流程，但不送單 | 🟠 流程 UI 完成，模擬數值多為常數 |
-| ③ Live | 真實下單 | ⛔ 不存在，**未經使用者明確批准不得開始** |
+| ① Research | 5 所即時掃描 + 歷史/結算窗口分析 + 獲利邊界 | 🟡 掃描可用，歷史資料為 mock |
+| ② Dry-run | 現有劇本式流程展示 | 🟠 凍結，不再加功能 |
+| ③ Paper Trading | 即時行情 + 模擬撮合 + 完整交易紀錄（Binance × Bybit） | ⬜ 規格完成，前置工作未開始 |
+| ④ Backtest vs Paper 驗證 | 同 Schema 回測與 Paper 比對 | ⬜ |
+| ⑤ Small Capital Live | 真實下單 | ⛔ 不存在，**未經使用者明確批准不得開始** |
 
 **使用者的 6 項需求**（任何改動都要能對應回其中一項）：
 
@@ -62,8 +65,8 @@ curl -s localhost:3000/api/market/live-scan | head -c 300   # 應回 success:tru
 
 違反任何一條 = PR 不接受。
 
-1. **不送真實訂單**。任何會呼叫交易所私有端點（下單、撤單、查帳戶）的程式碼，需使用者在對話/issue 中明確批准，並預設關閉（例如 `LIVE_TRADING=false`）。
-2. **憑證隔離**：API Key/Secret 不得出現在 Common Schema、log、錯誤訊息、匯出檔、git。`.env*` 已在 `.gitignore`，不要改。
+1. **不送真實訂單**。真實下單 / 撤單端點不得出現在程式碼中，直到階段 ⑤（Small Capital Live）另立 OpenSpec change 並經使用者明確批准。Paper Trading 可呼叫**唯讀**私有端點（手續費等級、限流額度、權限檢查）。（2026-09-30 依 C-08 修訂）
+2. **憑證隔離**：API Key/Secret 只放 `.env.local`（`.gitignore` 的 `.env*` 已排除，不要改），只由 Runtime（Node）讀取；不得出現在前端、Common Schema、`TradingEvent.payload`、log、錯誤訊息、匯出檔、git。Key 權限必須為 Read-only、禁止 Withdraw。（2026-09-30 依 C-08 修訂）
 3. **策略/引擎層不得出現交易所名稱分支**。交易所差異只能存在 `src/adapters/` 與（過渡期）`server.ts` 的抓取段。
 4. **不得假設 8 小時結算**；週期與結算時間必須來自交易所回傳值。
 5. **費率一律存小數**；UI 顯示時才 ×100。
@@ -165,6 +168,13 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
 
+### 2026-09-30（5）— Claude (Opus 5.5)
+- **做了什麼**：新增 `docs/TRADING_SYSTEM_SPEC.md`（規格書 v0.2）與 `docs/PAPER_TRADING_TECH_SPEC.md`（技術書 v0.1），並依使用者對 C-01～C-18 的回覆整併（決策紀錄見規格書 §34）；`openspec init --tools claude`（`openspec/config.yaml` 填入專案 context 與規則）；建立 `develop`（來自 `main`）與 `feature-trading-spec-v02`；修訂本檔 Invariant #1 #2、§1 階段、§8；`.env.example` 加入 Bybit / OKX 欄位與規則；UI 上舊的「Spec v0.2」標籤改為 v0.1（C-02）。
+- **驗證證據**：`openspec validate --all`、`npm run lint`、`npm run build` 結果見該次 commit 訊息。
+- **沒做完 / 已知問題**：C-05（事件迴圈 / 進出場時機）、C-16（Kill Switch 分層）、C-19（hedge ratio 計算基準）待決；`funding` 分支（= main + ff733c4）已被 `feature-trading-spec-v02` 取代，可在合併後退役。
+- **下一步建議**：`/opsx:explore paper-trading-event-loop`（C-05）→ `/opsx:propose setup-vitest`（技術書 §50.1 第 1 項）。
+- **需要使用者決定的事**：C-05、C-16、C-19；§8 第 3 題。
+
 ### 2026-09-30（4）— Claude (Opus 5.5) + 3 個 review agent
 - **做了什麼**：以量化交易員 / 後端效能 / 前端效能三個角色平行 review，產出 `issue/` 25 個 issue（Q 8、BE 10、FE 7）與索引 `issue/README.md`（最嚴重 5 件事、全案 Top 3 方向、推翻的假設）。未修改原始碼。
 - **驗證證據**：主審查者獨立重做 Q-01（Pionex 22 個反向合約）、Q-05（滑價重複扣除）、FE-01（stale closure）；Binance FAQ 3 段引述、Go singleflight 引述逐字相符；OKX `instId=ANY` 實測回 717 筆。
@@ -195,7 +205,9 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 
 ## 8. 待使用者決定的問題
 
-1. **獲利口徑**：只做「單次結算、T-30s 進 T+30s 出」，還是也考慮持倉跨多次結算？（影響 B2 的正規化方式）
-2. **交易所範圍**：Pionex 是必選的一腿，還是 5 所任意兩兩配對都可以？
-3. **最低流動性門檻**：24h 量 / 盤口深度要多少以上才算「穩定交易量」？
-4. **是否導入 OpenSpec**：此專案目前沒有 `openspec/`。若要照規格驅動流程開發，建議先 `openspec init`，把 B2–B8 各開成一個 change。
+1. **獲利口徑 / 持倉跨幾次結算**：併入規格書 C-05（WebSocket 事件驅動已確定；進出場時機待 `/opsx:explore paper-trading-event-loop` 評估）。
+2. ~~交易所範圍~~ ✅ 2026-09-30（C-01）：5 所持續掃描；Paper Trading 只在 Binance × Bybit，未來加 OKX；Pionex 僅掃描。
+3. **最低流動性門檻**：24h 量 / 盤口深度要多少以上才算「穩定交易量」？（仍待決）
+4. ~~是否導入 OpenSpec~~ ✅ 2026-09-30：已 `openspec init`；分支模型 `main` / `develop` / `feature-*`（技術書 §51）。
+5. **Kill Switch 分層**：規格書 C-16（5 個子問題）。
+6. **Hedge ratio 以數量或名目計算**：規格書 C-19。
