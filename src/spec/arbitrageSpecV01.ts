@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  * 
  * Funding Arbitrage System Spec - Formal Repository
- * Covers Spec v0.1 Foundations and Spec v0.2 System Architecture (7-Module Pipeline).
+ * Spec v0.1: Foundations + 7-Module System Architecture (Research / Dry-run).
+ * Spec v0.2 (Paper Trading) lives in docs/TRADING_SYSTEM_SPEC.md.
  */
 
 export interface SpecSection {

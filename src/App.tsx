@@ -125,7 +125,7 @@ export default function App() {
           <LocalSecretsView />
         )}
 
-        {/* System Spec v0.2 Knowledge Base & Notes */}
+        {/* System Spec v0.1 Knowledge Base & Notes */}
         {activeTab === 'spec' && (
           <SpecViewer />
         )}
@@ -144,7 +144,7 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span className="text-slate-400">Pionex × Binance Funding Arbitrage Engine</span>
             <span aria-hidden="true">·</span>
-            <span className="text-emerald-400">Spec v0.2 Architecture</span>
+            <span className="text-emerald-400">Spec v0.1 Architecture</span>
             <span aria-hidden="true">·</span>
             <span>M1 ~ M7 Modular Pipeline</span>
           </div>

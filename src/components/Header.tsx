@@ -51,7 +51,7 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'simulator' as ActiveTab, label: 'M5. 60s Execution Flow', icon: Activity },
     { id: 'dryrun' as ActiveTab, label: 'M6/M7. Dry-Run & Risk Console', icon: Play, highlight: true },
     { id: 'secrets' as ActiveTab, label: 'Local Secret Vault', icon: Lock },
-    { id: 'spec' as ActiveTab, label: 'System Spec v0.2', icon: BookOpen },
+    { id: 'spec' as ActiveTab, label: 'System Spec v0.1', icon: BookOpen },
   ];
 
   return (
@@ -69,7 +69,7 @@ export const Header: React.FC<HeaderProps> = ({
                   Funding Arbitrage System Engine
                 </span>
                 <span className="text-xs font-mono text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-1.5 py-0.5 rounded">
-                  7-MODULE SPEC v0.2
+                  7-MODULE SPEC v0.1
                 </span>
               </div>
               <div className="flex items-center gap-2 text-xs text-slate-400">
