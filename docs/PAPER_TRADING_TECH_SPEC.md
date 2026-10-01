@@ -244,6 +244,16 @@ interface Clock {
 - 資料年齡：`data_age_ms = local_received − toLocal(ex, exchange_timestamp)`。
 - `runtime/src/` 內除 `RealClock` 外禁止直接呼叫 `Date.now()` / `setTimeout` / `setInterval`（`runtime/test/architecture.test.ts` 把關）。
 
+### 實作註記（`websocket-data-layer`，2026-10-01）
+
+§6–§8 的通道、必要欄位、`MarketDataEvent`（雙時間戳）已落地於 `runtime/src/market/`：
+
+- **兩層資料取得**：`runtime/src/market/marketDataService.ts` 依 `instrument-registry.subscribableSymbols` 啟動全市場層（Binance `STREAM` `!markPrice@arr` + 24h 量 `POLL`；Bybit `POLL` 每 10 s；Pionex / Bitget / OKX `POLL` 每 30 s），並提供 `promote` / `release` / `releaseInstruments` 驅動入圍層（僅 `trading_exchanges`，目前為 Binance、Bybit）。
+- **MarketDataEvent** 實際型別見 `runtime/src/market/types.ts`：比本節示意多了 `timestamp_source`（`'EXCHANGE' | 'RESPONSE' | 'LOCAL'`）、`tier`（`'FULL_MARKET' | 'SHORTLIST'`）、`next_funding_time?`、`volume_24h_quote?`；`bid` / `ask` / `mark_price` / `index_price` / `funding_rate` 皆為 `number | null`（缺欄位為 `null`，不補值，BE-02）。
+- **正規化寫入**：`runtime/src/market/state/marketState.ts` 的 `upsert()` 只在 `exchange_timestamp` 較新時覆寫；同一合約的欄位若來自同所的多個 feed（例：OKX 把 tickers / funding-rate / mark-price 拆成三個獨立 POLL），採**欄位級合併**而非整筆覆寫——較新但欄位較少的 feed 不會把另一個 feed 剛寫入的欄位沖掉（task 5.1 以真實資料驗證時發現並修正；見 `marketState.test.ts` 的「merges fields across separate feeds」案例）。
+- **新鮮度**：`runtime/src/market/state/freshness.ts` 的 `data_age_ms = clock.exchangeNow(ex) − exchange_timestamp`，與本節「必須先扣除時鐘偏差」一致。門檻目前在 `server.ts` 以**單一全域值**（`shortlist_threshold_ms`、`full_market_threshold_ms`）設定，待定：規格要求 `watch_stale_threshold_ms` 應為「該所 feed 輪詢間隔 × 3」逐所計算，`MarketState` 尚未支援逐所門檻（見 HANDOFF §7 本次交接紀錄「待定」清單）。
+- **時鐘校正樣本來源**：`runtime/src/market/serverTime.ts` 的 `queryServerTime` / `makeServerTimeSource` 提供 §8.1 `RealClock.calibrate()` 所需的 `CalibrationSample`（`sentAt` / `serverTime` / `receivedAt`），經 `GuardedRestClient`（計入限流、斷路器開啟時回傳 `RATE_LIMITED`）、不做 single-flight。`server.ts` 每 30 s 對 5 所各呼叫一次。
+
 ---
 
 ## 9. Scanner Runtime

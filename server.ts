@@ -10,17 +10,30 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
-import { buildLiveScanCandidates, type LiveScanLegData } from './server/liveScanRegistry';
+import { buildLiveScanCandidates } from './server/liveScanRegistry';
 import { resolveKlinesSymbol } from './server/liveKlinesResolve';
 import { InstrumentRegistry } from './runtime/src/market/instruments/registry';
-import { BasicRestClient, UpstreamError } from './runtime/src/market/http/publicRestClient';
+import { UpstreamError } from './runtime/src/market/http/publicRestClient';
+import { GuardedRestClient } from './runtime/src/market/http/guardedRestClient';
+import { SourceStatusTracker } from './runtime/src/market/sourceStatus';
+import { MarketState } from './runtime/src/market/state/marketState';
+import { OrderBookService } from './runtime/src/market/orderBookService';
+import { MarketDataService } from './runtime/src/market/marketDataService';
+import { queryServerTime } from './runtime/src/market/serverTime';
+import { RealClock } from './runtime/src/clock/realClock';
 import { normalizeBinanceInstruments } from './runtime/src/adapters/binance/instruments';
 import { normalizeBybitInstruments } from './runtime/src/adapters/bybit/instruments';
 import { normalizeOkxInstruments } from './runtime/src/adapters/okx/instruments';
 import { normalizeBitgetInstruments } from './runtime/src/adapters/bitget/instruments';
 import { normalizePionexInstruments } from './runtime/src/adapters/pionex/instruments';
-import { mapBitgetFundingRateSchedule } from './server/bitgetFundingSchedule';
+import { binanceMarketDataAdapter } from './runtime/src/adapters/binance/marketData';
+import { bybitMarketDataAdapter } from './runtime/src/adapters/bybit/marketData';
+import { okxMarketDataAdapter } from './runtime/src/adapters/okx/marketData';
+import { bitgetMarketDataAdapter } from './runtime/src/adapters/bitget/marketData';
+import { pionexMarketDataAdapter } from './runtime/src/adapters/pionex/marketData';
+import { buildLegDataFromMarketState, buildSourcesSnapshot, buildDataAsOf } from './server/liveScanFromMarketState';
 import type { ExchangeId, EventSink, TradingEvent, InstrumentSourceStatus } from './runtime/src/market/instruments/types';
+import type { RateLimitRule, MarketDataAdapter } from './runtime/src/market/types';
 
 dotenv.config();
 
@@ -28,10 +41,6 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json());
-
-// In-memory cache for live market data to protect exchange rate limits (5-second cache)
-let liveScanCache: { timestamp: number; data: any } | null = null;
-const CACHE_TTL_MS = 5000;
 
 export type ExchangeName = 'Pionex' | 'Binance' | 'Bybit' | 'Bitget' | 'OKX';
 
@@ -49,7 +58,92 @@ const consoleEventSink: EventSink = {
 };
 
 const registry = new InstrumentRegistry(consoleEventSink);
-const restClient = new BasicRestClient({ localNow: () => Date.now() });
+
+// --- websocket-data-layer wiring（task 4.2：嵌入式行情服務） ---------------
+
+const clock = new RealClock();
+const sourceStatus = new SourceStatusTracker({ eventSink: consoleEventSink, now: () => clock.now() });
+
+const marketDataAdapters: Partial<Record<ExchangeId, MarketDataAdapter>> = {
+  Binance: binanceMarketDataAdapter,
+  Bybit: bybitMarketDataAdapter,
+  OKX: okxMarketDataAdapter,
+  Bitget: bitgetMarketDataAdapter,
+  Pionex: pionexMarketDataAdapter,
+};
+
+const rateLimitRulesByExchange = Object.fromEntries(
+  Object.entries(marketDataAdapters).map(([ex, adapter]) => [ex, adapter!.rateLimits]),
+) as Record<ExchangeId, RateLimitRule[]>;
+
+const restClient = new GuardedRestClient({
+  clock,
+  eventSink: consoleEventSink,
+  rateLimitRules: rateLimitRulesByExchange,
+  sourceStatus,
+  envelopeError: (exchange, body) => marketDataAdapters[exchange]?.rest.envelopeError(body) ?? null,
+});
+
+const marketState = new MarketState({
+  clock,
+  eventSink: consoleEventSink,
+  sourceStatus,
+  // watch_stale_threshold_ms 設計上應為「該所 feed 輪詢間隔 × 3」（design.md Decision 5 第 5 點），
+  // 目前 MarketState 只接受單一全域門檻（待定：改為逐所門檻，見本 change 最終報告「待定」清單）；
+  // 暫以最慢的全市場 POLL 間隔（Pionex / Bitget / OKX 30 s）× 3 = 90 s 作為保守值，
+  // 避免輪詢間隔本身就逼近門檻而產生假性 stale/recovered 抖動（task 5.1 實測發現）。
+  thresholds: { shortlist_threshold_ms: 3000, full_market_threshold_ms: 90_000 },
+  max_last_known_good_age_ms: 300_000,
+  freshness_check_interval_ms: 500,
+});
+marketState.start();
+
+const orderBookService = new OrderBookService({
+  clock,
+  eventSink: consoleEventSink,
+  restClient,
+  adapterFor: (exchange) => marketDataAdapters[exchange as ExchangeId]!,
+});
+
+const SCAN_EXCHANGES: ExchangeId[] = ['Pionex', 'Binance', 'Bybit', 'Bitget', 'OKX'];
+// trading_exchanges：目前只有 Binance、Bybit 的 adapter 宣告 shortlist（design.md Decision 2）。
+// server.ts 本身沒有場次（proposal「研究端過渡」），promote/release 只供未來 Paper Runtime 使用。
+const TRADING_EXCHANGES: ExchangeId[] = ['Binance', 'Bybit'];
+
+const marketDataService = new MarketDataService({
+  clock,
+  eventSink: consoleEventSink,
+  registry,
+  restClient,
+  marketState,
+  orderBook: orderBookService,
+  sourceStatus,
+  wsFactory: (url: string) => new WebSocket(url) as unknown as import('./runtime/src/market/types').MinimalWebSocket,
+  adapters: marketDataAdapters,
+  scan_exchanges: SCAN_EXCHANGES,
+  trading_exchanges: TRADING_EXCHANGES,
+  reconnect_backoff: { base_ms: 1000, max_ms: 60_000, jitter_ratio: 0.2 },
+  backoff_reset_after_ms: 60_000,
+});
+
+const SERVER_TIME_CALIBRATION_INTERVAL_MS = 30_000;
+
+async function calibrateClock(): Promise<void> {
+  await Promise.all(
+    SCAN_EXCHANGES.map(async (exchange) => {
+      const adapter = marketDataAdapters[exchange];
+      if (!adapter) return;
+      try {
+        const sentAt = clock.now();
+        const sample = await queryServerTime(restClient, adapter);
+        const receivedAt = clock.now();
+        clock.calibrate(exchange, { sentAt, serverTime: sample.server_time, receivedAt });
+      } catch (err) {
+        console.error(`[market-data] clock calibration failed for ${exchange}:`, err);
+      }
+    }),
+  );
+}
 
 let registrySuccessfulSourceCount = 0;
 let registryHasRefreshedOnce = false;
@@ -221,42 +315,10 @@ async function refreshRegistry(): Promise<void> {
   console.log(`[instrument-registry] refresh complete: ${registrySuccessfulSourceCount}/5 sources OK`);
 }
 
-// --- Bitget 資金費時程獨立刷新（design.md Decision 5）---
-// GET current-fund-rate?productType=USDT-FUTURES 不帶 symbol 即批次回傳全部合約
-// （2026-10-01 實測：825 筆、單次請求），每 5 分鐘刷新一次；偵測到 STALE 時可提前刷新，
-// 但同所兩次間隔 ≥ 30 秒。
-const BITGET_FUNDING_SCHEDULE_REFRESH_INTERVAL_MS = 300_000;
-const BITGET_FUNDING_SCHEDULE_MIN_REFRESH_GAP_MS = 30_000;
-let lastBitgetFundingScheduleRefreshAt = 0;
-
-async function refreshBitgetFundingSchedule(now: number): Promise<void> {
-  lastBitgetFundingScheduleRefreshAt = now;
-  try {
-    const res = await restClient.getJson<any>({
-      exchange: 'Bitget',
-      url: 'https://api.bitget.com/api/v2/mix/market/current-fund-rate?productType=USDT-FUTURES',
-    });
-    if (res.data?.code !== '00000') throw new Error(`Bitget API error: ${res.data?.msg}`);
-    const entries = mapBitgetFundingRateSchedule(res.data?.data ?? [], now);
-    for (const entry of entries) {
-      registry.updateFundingSchedule('Bitget', entry.native_symbol, entry.update, now);
-    }
-    console.log(`[instrument-registry] Bitget funding schedule refreshed: ${entries.length} symbols`);
-  } catch (err) {
-    console.error('[instrument-registry] Bitget funding schedule refresh failed:', err);
-  }
-}
-
-/** 偵測 Bitget 是否有 TRADING 合約的結算時程為 STALE，若有且距上次刷新 ≥ 30 秒則提前刷新。 */
-async function refreshBitgetFundingScheduleIfStale(now: number): Promise<void> {
-  if (now - lastBitgetFundingScheduleRefreshAt < BITGET_FUNDING_SCHEDULE_MIN_REFRESH_GAP_MS) return;
-  const hasStale = registry
-    .list({ exchange: 'Bitget', status: 'TRADING' })
-    .some((i) => i.funding.schedule_status === 'STALE');
-  if (hasStale) {
-    await refreshBitgetFundingSchedule(now);
-  }
-}
+// 過渡期的 Bitget 專屬資金費時程刷新迴圈（design.md Decision 5 舊版）已移除
+// （task 4.2）：`marketDataService` 的 Bitget `currentFundRate` POLL feed（每 5 分鐘，見
+// runtime/src/adapters/bitget/marketData.ts）透過通用的 `fundingService.forwardFundingSchedule`
+// 呼叫 `registry.updateFundingSchedule`，涵蓋全部 5 所，不再是 Bitget 專屬特例。
 
 function registrySourcesSnapshot(): Record<string, InstrumentSourceStatus | undefined> {
   const exchanges: ExchangeId[] = ['Pionex', 'Binance', 'Bybit', 'Bitget', 'OKX'];
@@ -265,212 +327,71 @@ function registrySourcesSnapshot(): Record<string, InstrumentSourceStatus | unde
   return out;
 }
 
+// 記憶化（market-data-stream spec「Research live-scan served from in-memory market
+// state」design.md Decision 8 第 2 點）：聚合結果以 marketState.version() 做快取鍵，
+// 至多每 scan_recompute_min_interval_ms（預設 1,000）重算一次；time_to_settlement_sec
+// 永遠以「取自快取的 next_funding_time」與本次請求的 now 重新計算（不是快取裡的舊值）。
+const SCAN_RECOMPUTE_MIN_INTERVAL_MS = 1_000;
+let liveScanAggCache: { version: number; computedAt: number; candidates: ReturnType<typeof buildLiveScanCandidates> } | null = null;
+
+function computeLiveScanCandidates(now: number): ReturnType<typeof buildLiveScanCandidates> {
+  const version = marketState.version();
+  if (
+    liveScanAggCache &&
+    liveScanAggCache.version === version &&
+    now - liveScanAggCache.computedAt < SCAN_RECOMPUTE_MIN_INTERVAL_MS
+  ) {
+    // 快取命中：仍對每筆候選的 time_to_settlement_sec 以目前 now 重算（spec 明文：每次回應重算）。
+    return liveScanAggCache.candidates.map((c) => ({
+      ...c,
+      time_to_settlement_sec: Math.max(Math.floor((c.next_funding_time - now) / 1000), 0),
+    }));
+  }
+
+  const legData = buildLegDataFromMarketState(registry, marketState);
+  const instrumentsByKey = new Map<string, ReturnType<typeof registry.list>>();
+  for (const instrument of registry.list()) {
+    const list = instrumentsByKey.get(instrument.instrument_key) ?? [];
+    list.push(instrument);
+    instrumentsByKey.set(instrument.instrument_key, list);
+  }
+  const candidates = buildLiveScanCandidates({
+    instrumentsByKey,
+    legData,
+    now,
+    funding_alignment_tolerance_ms: 60_000,
+    price_mismatch_tolerance_pct: 0.02,
+  });
+  liveScanAggCache = { version, computedAt: now, candidates };
+  return candidates;
+}
+
 /**
  * GET /api/market/live-scan
- * Fetches real-time funding rates from all 5 exchanges: Pionex, Binance, Bybit, Bitget, OKX
+ * 只讀記憶體行情狀態（websocket-data-layer task 4.2）：請求路徑上不再發出任何上游請求。
+ * 支援 `?symbol=` 單一合約篩選；回傳新增 `sources`、`data_as_of`。
  */
-app.get('/api/market/live-scan', async (_req, res) => {
+app.get('/api/market/live-scan', async (req, res) => {
   try {
-    const now = Date.now();
+    const now = clock.now();
 
-    // 註冊表尚未完成第一次刷新（design.md Decision 9 第 4 點）
+    // 註冊表尚未完成第一次刷新（design.md Decision 9 第 4 點，沿用既有判斷）
     if (!registryHasRefreshedOnce) {
       return res.status(503).json({ success: false, error: 'REGISTRY_NOT_READY' });
     }
-
-    if (liveScanCache && now - liveScanCache.timestamp < CACHE_TTL_MS) {
-      return res.json({
-        success: true,
-        cached: true,
-        cache_age_ms: now - liveScanCache.timestamp,
-        ...liveScanCache.data,
-      });
+    // 行情服務尚未完成第一次全市場快照（market-data-snapshot spec 明文）
+    if (!marketDataService.isReady()) {
+      return res.status(503).json({ success: false, error: 'MARKET_DATA_NOT_READY', sources: buildSourcesSnapshot(sourceStatus) });
     }
 
-    // Bitget 結算時間經獨立 5 分鐘刷新提供；若已 STALE 且距上次刷新 ≥30 秒則提前刷新
-    // （design.md Decision 5 / Risks「Bitget 結算時間由 5 分鐘刷新提供，結算後短暫 STALE」）。
-    await refreshBitgetFundingScheduleIfStale(now);
+    const t0 = clock.now();
+    let candidates = computeLiveScanCandidates(now);
+    const fetchLatencyMs = clock.now() - t0;
 
-    const t0 = Date.now();
-
-    const bnPromise = fetch('https://fapi.binance.com/fapi/v1/premiumIndex', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => []);
-
-    const pxPromise = fetch('https://api.pionex.com/api/v1/market/indexes', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => ({ data: { indexes: [] } }));
-
-    const pxTickersPromise = fetch('https://api.pionex.com/api/v1/market/tickers?type=PERP', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => ({ data: { tickers: [] } }));
-
-    const bybitPromise = fetch('https://api.bybit.com/v5/market/tickers?category=linear', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => ({ result: { list: [] } }));
-
-    const bitgetPromise = fetch('https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => ({ data: [] }));
-
-    const okxTickersPromise = fetch('https://www.okx.com/api/v5/market/tickers?instType=SWAP', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => ({ data: [] }));
-
-    const okxFundingPromise = fetch('https://www.okx.com/api/v5/public/funding-rate?instId=ANY', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => ({ data: [] }));
-
-    const bn24hPromise = fetch('https://fapi.binance.com/fapi/v1/ticker/24hr', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => []);
-
-    const [bnData, pxData, pxTickersData, bybitData, bitgetData, okxTickersData, okxFundingData, bn24hData] = await Promise.all([
-      bnPromise,
-      pxPromise,
-      pxTickersPromise,
-      bybitPromise,
-      bitgetPromise,
-      okxTickersPromise,
-      okxFundingPromise,
-      bn24hPromise,
-    ]);
-
-    const fetchLatencyMs = Date.now() - t0;
-
-    // instrument_id -> live leg data（費率 / 標記價 / 24h 量）
-    const legData = new Map<string, LiveScanLegData>();
-
-    function setLeg(exchange: ExchangeId, nativeSymbol: string, rate: number, mark: number): void {
-      const instrument = registry.get(exchange, nativeSymbol);
-      if (!instrument) return;
-      const existing = legData.get(instrument.instrument_id);
-      legData.set(instrument.instrument_id, { rate, mark, volume_24h: existing?.volume_24h ?? null });
+    const symbolFilter = typeof req.query.symbol === 'string' ? req.query.symbol : undefined;
+    if (symbolFilter) {
+      candidates = candidates.filter((c) => c.symbol === symbolFilter || c.instrument_key === symbolFilter);
     }
-
-    function setVolume(exchange: ExchangeId, nativeSymbol: string, volume: number): void {
-      const instrument = registry.get(exchange, nativeSymbol);
-      if (!instrument) return;
-      const existing = legData.get(instrument.instrument_id);
-      if (existing) {
-        existing.volume_24h = volume;
-      } else {
-        legData.set(instrument.instrument_id, { rate: NaN, mark: NaN, volume_24h: volume });
-      }
-    }
-
-    // Binance
-    if (Array.isArray(bnData)) {
-      for (const item of bnData) {
-        if (!item.symbol?.endsWith('USDT')) continue;
-        setLeg('Binance', item.symbol, parseFloat(item.lastFundingRate || '0'), parseFloat(item.markPrice || '0'));
-        if (item.nextFundingTime) {
-          registry.updateFundingSchedule('Binance', item.symbol, { next_funding_time: item.nextFundingTime, exchange_timestamp: now }, now);
-        }
-      }
-    }
-    if (Array.isArray(bn24hData)) {
-      for (const item of bn24hData) {
-        if (item.symbol?.endsWith('USDT') && item.quoteVolume) {
-          setVolume('Binance', item.symbol, parseFloat(item.quoteVolume));
-        }
-      }
-    }
-
-    // Pionex
-    const pxIndexes = pxData?.data?.indexes || [];
-    if (Array.isArray(pxIndexes)) {
-      for (const item of pxIndexes) {
-        if (!item.symbol?.endsWith('_PERP')) continue;
-        setLeg('Pionex', item.symbol, parseFloat(item.nextFundingRate || '0'), parseFloat(item.markPrice || '0'));
-        if (item.nextFundingTime) {
-          registry.updateFundingSchedule('Pionex', item.symbol, { next_funding_time: item.nextFundingTime, exchange_timestamp: now }, now);
-        }
-      }
-    }
-    const pxTickers = pxTickersData?.data?.tickers || [];
-    if (Array.isArray(pxTickers)) {
-      for (const item of pxTickers) {
-        if (item.symbol && item.amount) {
-          setVolume('Pionex', item.symbol, parseFloat(item.amount));
-        }
-      }
-    }
-
-    // Bybit
-    const bybitList = bybitData?.result?.list || [];
-    if (Array.isArray(bybitList)) {
-      for (const item of bybitList) {
-        if (!item.symbol?.endsWith('USDT')) continue;
-        setLeg('Bybit', item.symbol, parseFloat(item.fundingRate || '0'), parseFloat(item.markPrice || '0'));
-        if (item.nextFundingTime) {
-          registry.updateFundingSchedule('Bybit', item.symbol, { next_funding_time: parseInt(item.nextFundingTime), exchange_timestamp: now }, now);
-        }
-        if (item.turnover24h) {
-          setVolume('Bybit', item.symbol, parseFloat(item.turnover24h));
-        }
-      }
-    }
-
-    // Bitget
-    const bitgetList = bitgetData?.data || [];
-    if (Array.isArray(bitgetList)) {
-      for (const item of bitgetList) {
-        if (!item.symbol?.endsWith('USDT')) continue;
-        setLeg('Bitget', item.symbol, parseFloat(item.fundingRate || '0'), parseFloat(item.markPrice || '0'));
-        if (item.usdtVolume) {
-          setVolume('Bitget', item.symbol, parseFloat(item.usdtVolume));
-        }
-      }
-    }
-
-    // OKX
-    const okxRawList = okxTickersData?.data || [];
-    const okxUsdtSwaps = Array.isArray(okxRawList) ? okxRawList.filter((t: any) => t.instId && t.instId.endsWith('-USDT-SWAP')) : [];
-    const okxFundingList = okxFundingData?.data || [];
-    const okxRatesMap = new Map<string, { rate: number; nextFundingTime: number }>();
-    if (Array.isArray(okxFundingList)) {
-      for (const item of okxFundingList) {
-        if (item.instId && item.fundingRate) {
-          okxRatesMap.set(item.instId, { rate: parseFloat(item.fundingRate), nextFundingTime: parseInt(item.fundingTime || item.nextFundingTime || '0') });
-        }
-      }
-    }
-    for (const t of okxUsdtSwaps) {
-      const info = okxRatesMap.get(t.instId);
-      if (!info) continue;
-      setLeg('OKX', t.instId, info.rate, parseFloat(t.last || '0'));
-      if (info.nextFundingTime) {
-        registry.updateFundingSchedule('OKX', t.instId, { next_funding_time: info.nextFundingTime, exchange_timestamp: now }, now);
-      }
-      if (t.volCcy24h && t.last) {
-        setVolume('OKX', t.instId, parseFloat(t.volCcy24h) * parseFloat(t.last));
-      }
-    }
-
-    // 以 instrument_key 分組所有已登錄合約（不限於本次有即時資料者，matching 會自行比對）
-    const instrumentsByKey = new Map<string, ReturnType<typeof registry.list>>();
-    for (const instrument of registry.list()) {
-      const list = instrumentsByKey.get(instrument.instrument_key) ?? [];
-      list.push(instrument);
-      instrumentsByKey.set(instrument.instrument_key, list);
-    }
-
-    const candidates = buildLiveScanCandidates({
-      instrumentsByKey,
-      legData,
-      now,
-      funding_alignment_tolerance_ms: 60_000,
-      price_mismatch_tolerance_pct: 0.02,
-    });
 
     const payload = {
       server_time: now,
@@ -486,20 +407,21 @@ app.get('/api/market/live-scan', async (_req, res) => {
       },
       candidates,
       registry_sources: registrySourcesSnapshot(),
+      sources: buildSourcesSnapshot(sourceStatus),
+      data_as_of: buildDataAsOf(sourceStatus),
     };
-
-    liveScanCache = { timestamp: now, data: payload };
 
     return res.json({
       success: true,
       cached: false,
+      cache_age_ms: now - (liveScanAggCache?.computedAt ?? now),
       ...payload,
     });
   } catch (err: any) {
-    console.error('Error fetching 5-exchange live market data:', err);
+    console.error('Error serving 5-exchange live market data:', err);
     return res.status(500).json({
       success: false,
-      error: err.message || 'Failed to fetch 5-exchange market data',
+      error: err.message || 'Failed to serve 5-exchange market data',
     });
   }
 });
@@ -645,15 +567,18 @@ app.get('/api/market/live-klines', async (req, res) => {
 
 async function start() {
   // 非阻塞啟動刷新（design.md Decision 9 第 2 點）：app.listen 不等待註冊表就緒。
-  refreshRegistry()
-    .then(() => refreshBitgetFundingSchedule(Date.now()))
-    .catch(err => console.error('[instrument-registry] initial refresh failed:', err));
+  refreshRegistry().catch(err => console.error('[instrument-registry] initial refresh failed:', err));
   setInterval(() => {
     refreshRegistry().catch(err => console.error('[instrument-registry] periodic refresh failed:', err));
   }, INSTRUMENT_REFRESH_INTERVAL_MS);
+
+  // websocket-data-layer（task 4.2）：行情服務獨立於註冊表 metadata 刷新啟動；
+  // RealClock 先做一次校正樣本，再啟動全市場層輪詢 / 串流，之後每 30 s 重新校正。
+  await calibrateClock().catch(err => console.error('[market-data] initial clock calibration failed:', err));
+  marketDataService.start();
   setInterval(() => {
-    refreshBitgetFundingSchedule(Date.now()).catch(err => console.error('[instrument-registry] Bitget funding schedule periodic refresh failed:', err));
-  }, BITGET_FUNDING_SCHEDULE_REFRESH_INTERVAL_MS);
+    calibrateClock().catch(err => console.error('[market-data] periodic clock calibration failed:', err));
+  }, SERVER_TIME_CALIBRATION_INTERVAL_MS);
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

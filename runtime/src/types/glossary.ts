@@ -163,6 +163,14 @@ export const GLOSSARY: readonly GlossaryEntry[] = [
   { code: 'INSTRUMENT_AMBIGUOUS', zh: '合約對應不明確', definition_zh: '同一符號在多所對應到無法唯一判定的合約', category: 'EVENT' },
   { code: 'INSTRUMENT_UNKNOWN_VALUE', zh: '合約欄位未知值', definition_zh: '交易所回傳合約欄位為未預期或無法解析的值', category: 'EVENT' },
   { code: 'INSTRUMENT_SOURCE_STATUS_CHANGED', zh: '合約資料來源狀態改變', definition_zh: 'Instrument Registry 資料來源（交易所 API）可用性改變', category: 'EVENT' },
+
+  // Extension codes owned by websocket-data-layer.
+  { code: 'FEED_STATE_CHANGED', zh: '行情連線狀態改變', definition_zh: 'WebSocket 連線狀態機轉換事件', category: 'EVENT' },
+  { code: 'MARKET_DATA_RECOVERED', zh: '行情資料恢復新鮮', definition_zh: '新鮮度由 stale 轉回新鮮', category: 'EVENT' },
+  { code: 'ORDER_BOOK_RESYNC', zh: '盤口重新同步', definition_zh: '序號缺口或交叉盤口，盤口轉為 RESYNCING 並重新取快照', category: 'EVENT' },
+  { code: 'SOURCE_STATUS_CHANGED', zh: '來源狀態改變', definition_zh: '每所 SourceStatus.state 轉換事件', category: 'EVENT' },
+  { code: 'RATE_LIMIT_CIRCUIT_CHANGED', zh: '限流斷路器狀態改變', definition_zh: '每所限流斷路器 CLOSED / OPEN / HALF_OPEN 轉換事件', category: 'EVENT' },
+  { code: 'SHORTLIST_SUBSCRIPTION_DROPPED', zh: '入圍訂閱被取消', definition_zh: '入圍合約因註冊表變動被取消訂閱', category: 'EVENT' },
 ] as const;
 
 export function getGlossaryEntry(category: GlossaryEntry['category'], code: string): GlossaryEntry | undefined {
