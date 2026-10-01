@@ -38,6 +38,8 @@ export type {
   // events
   TradingEvent,
   TradingEventType,
+  // glossary
+  GlossaryEntry,
 } from '../../../../runtime/src/types';
 
 export {
