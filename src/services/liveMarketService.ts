@@ -70,6 +70,20 @@ export interface LiveScanResponse {
   candidates: LiveMarketCandidate[];
   // instrument-registry 新增欄位：每所註冊表來源狀態（選用）
   registry_sources?: Record<string, { status: 'OK' | 'FAILED'; error_kind?: string; http_status?: number }>;
+  // websocket-data-layer 新增欄位（選用，向下相容）：每所行情來源狀態與最近成功更新時間
+  // （market-data-snapshot spec「Research live-scan served from in-memory market state」）。
+  sources?: Record<
+    ExchangeName,
+    {
+      state: 'INITIALIZING' | 'HEALTHY' | 'DEGRADED' | 'FAILED' | 'RATE_LIMITED';
+      last_success_at: number | null;
+      data_age_ms: number | null;
+      instrument_count: number;
+      consecutive_failures: number;
+    } | undefined
+  >;
+  data_as_of?: Record<ExchangeName, number | null>;
+  cache_age_ms?: number;
 }
 
 export async function fetchLiveMarketScan(): Promise<LiveScanResponse> {

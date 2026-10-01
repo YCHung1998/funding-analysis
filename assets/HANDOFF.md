@@ -79,16 +79,25 @@ curl -s localhost:3000/api/market/live-scan | head -c 300   # 應回 success:tru
 
 ### 4.1 資料流
 
-完整架構圖與元件索引見 [`ARCHITECTURE.md`](ARCHITECTURE.md)（互動版 [`architecture.html`](architecture.html)）。架構有變動時必須同步更新這三個檔案。
+完整架構圖與元件索引見 [`ARCHITECTURE.md`](ARCHITECTURE.md)（互動版 [`architecture.html`](architecture.html)）。**本圖尚未同步** `websocket-data-layer`（使用者已決定 ARCHITECTURE 圖重繪留到所有 change 做完的最後一輪，見本節下方文字說明）。
+
+> 2026-10-01（`websocket-data-layer`）：請求路徑與上游抓取已脫鉤，取代下圖第一行。
 
 ```
-交易所公開 API ──► server.ts (/api/market/live-scan)  ──► liveMarketService ──► FunnelScannerView / DryRunConsole
-                    └ 自己解析 JSON，沒用 adapters/
+交易所公開 API ──► runtime/src/market/marketDataService（WS + POLL，背景常駐）──► MarketState（記憶體最新值表）
+                     └ adapters/<exchange>/marketData.ts 解析（feed 描述、限流規則表只在這裡）
 
-adapters/*.ts ──► 只被 SchemaInspector（展示頁）使用
+server.ts (/api/market/live-scan) ──► 只讀 MarketState + registry.matchPair（請求路徑 0 次上游呼叫）──► liveMarketService ──► FunnelScannerView / DryRunConsole
+
+adapters/<exchange>/instruments.ts ──► InstrumentRegistry（合約 metadata，1 小時刷新，獨立於上面的即時行情）
+adapters/*Adapter.ts（舊，src/adapters/）──► 只被 SchemaInspector（展示頁）使用
 mockMarketData.ts ──► ArbitrageScanner / SettlementKlineViewer / ExecutionSimulator
 funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 ```
+
+- **GuardedRestClient**（`runtime/src/market/http/guardedRestClient.ts`）：single-flight、限流規則表 + 標頭用量、斷路器（`OPEN`/`HALF_OPEN`/`CLOSED`）、錯誤分類。`server.ts` 的 `restClient` 現在是這個（原本的 `BasicRestClient` 已移除）；`instrument-registry` 的 metadata 刷新（`refreshBinance` 等）與即時行情共用同一個實例、同一組限流規則表。
+- **RealClock 校正**：`server.ts` 每 30 s 對 5 所各呼叫一次 `queryServerTime`（經 `GuardedRestClient`，不做 single-flight）校正 `clock.calibrate(exchange, sample)`；live-scan 的 `time_to_settlement_sec` 用 `clock.now()`。
+- **SourceStatus**：每所 `HEALTHY`/`DEGRADED`/`FAILED`/`RATE_LIMITED`/`INITIALIZING`，隨 live-scan 回應的 `sources` 欄位（含 `rate_limit.used/limit/circuit`）一併回傳，取代原本只有 `registry_sources`（合約 metadata 來源狀態，兩者不同、都保留）。
 
 ### 4.2 已確認問題（依對結果正確性的影響排序）
 
@@ -182,6 +191,34 @@ B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run che
 - **下一步建議**：<1–3 項，指向 Backlog ID>
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
+
+### 2026-10-01（5）— Claude Sonnet 5，`websocket-data-layer`（分支 `feature-websocket-data-layer`）
+- **做了什麼**：實作 OpenSpec change `websocket-data-layer`（12 項任務 1.1–5.1 全數完成）：
+  - 基礎：`MarketDataEvent`（雙時間戳、`timestamp_source`、`tier`）、`SourceStatus`、`MarketDataAdapter` feed 描述、假 WebSocket / 假 REST 測試替身、架構守門擴充至 `runtime/src/market/` 的交易所名稱字面值檢查（`runtime/src/market/types.ts`、`runtime/src/market/testDoubles/`、`runtime/test/architecture.test.ts`）。
+  - `GuardedRestClient`（single-flight、限流規則表 + 標頭用量、軟上限拉長輪詢、斷路器 `CLOSED`/`OPEN`/`HALF_OPEN`、`Retry-After` 取大值）取代 `BasicRestClient`（`runtime/src/market/http/guardedRestClient.ts`、`rateLimiter.ts`）。
+  - `SourceStatus` 狀態機、`queryServerTime` + `ServerTimeSource`（`runtime/src/market/sourceStatus.ts`、`serverTime.ts`）。
+  - `wsConnection` / `connectionPool`（狀態機、心跳、指數退避、先建後拆輪替、主題分片，`runtime/src/market/stream/`）、`marketState` + `freshness`（正規化寫入、新鮮度、`STALE_MARKET_DATA`/`MARKET_DATA_RECOVERED`，`runtime/src/market/state/`）、`orderBookService`（`SNAPSHOT_STREAM`/`DELTA_STREAM`、序號缺口 → `RESYNCING`）、`fundingService`。
+  - 5 所 `marketData.ts` adapter（`runtime/src/adapters/<exchange>/marketData.ts`）。
+  - `marketDataService`（兩層協調、`promote`/`release`/`releaseInstruments`）與 `server.ts` 嵌入（`/api/market/live-scan` 改讀記憶體狀態、新增 `sources`/`data_as_of`、`?symbol=`、503 未就緒、移除舊 REST 抓取段與 Bitget 專屬時程刷新迴圈）。
+  - 新增 `TradingEventType` 擴充碼：`FEED_STATE_CHANGED`、`MARKET_DATA_RECOVERED`、`ORDER_BOOK_RESYNC`、`SOURCE_STATUS_CHANGED`、`RATE_LIMIT_CIRCUIT_CHANGED`、`SHORTLIST_SUBSCRIPTION_DROPPED`（`runtime/src/types/event.ts` + `glossary.ts`）。
+- **驗證證據**：
+  - `npm run check`（lint → build → test）全綠：97 測試檔、939 測試通過；`openspec validate websocket-data-layer --strict` 通過。
+  - 實測 Binance WS 真實連線（task 3.1）：`wss://fstream.binance.com/ws/!markPrice@arr`（WHATWG 標準路徑）35 s 內 0 則訊息；`wss://fstream.binance.com/market/ws/!markPrice@arr` 連線後約 2 s 開始收訊息、15 s 內收到 10 則、每則 745 symbol，Node 內建 WebSocket 全程維持 `OPEN`（不需要 `ws` 依賴，design.md Open Question 2 已回答）。
+  - 實測 OKX mark-price 端點（task 3.3）：`GET /api/v5/public/mark-price?instType=SWAP` 可用、批次回傳全市場，design.md 標記的「未查證」已查證並改為直接取用（不再以 `last` 代替）。
+  - `npm run dev`（`NODE_ENV=production` + port-patch require script，監聽 3001，未動使用者的 3000）實測 live-scan：5 所全部 `HEALTHY`，`total_matched_pairs` 405→570（快照持續補齊）；Binance `rate_limit.used` 在 ~165 s 觀測窗（**縮短自建議的 10 分鐘**，見下方已知限制）穩定在 41–53/2400（約 2%）；50 併發請求 279 ms、50/50 成功（上游呼叫數結構性為 0，查詢路徑不碰 `restClient`）；`?symbol=` 篩選、倒數每次請求重算（3 s 間隔對應减少 ~7 s，含量測開銷）皆驗證通過。
+  - 實測中發現並修正一個真實 bug：OKX 把 tickers / funding-rate / mark-price 拆成 3 個獨立 POLL feed，`MarketState.upsert` 原本整筆覆寫會讓較新但欄位較少的 feed 把另一個 feed剛寫入的欄位沖掉，導致一開始 `total_matched_pairs = 0`；改為「較新時覆寫、但傳入 `null` 的欄位保留舊值」的欄位級合併，修正後見上方 405/570 筆。已補迴歸測試 `marketState.test.ts`「merges fields across separate feeds」。
+- **沒做完 / 已知問題**：
+  - `runtime/src/market/state/marketState.ts` 的新鮮度門檻目前是單一全域值（`server.ts:91` 的 `thresholds`），spec 要求 `watch_stale_threshold_ms` 應逐所計算為「該所 feed 輪詢間隔 × 3」；暫以保守值 90 s（最慢全市場 POLL 間隔 30 s × 3）避免假性 stale/recovered 抖動（task 5.1 實測時曾以 30 s 門檻 = 輪詢間隔本身，觀察到 Pionex/Bitget 每輪都在門檻邊界抖動並正確觸發 `STALE_MARKET_DATA`/`MARKET_DATA_RECOVERED` 事件——這同時證明了偵測機制本身是對的，純粹是閾值設定需要逐所化）。
+  - 「拔網路 30 s」驗證以 Binance WS 全程維持連線、以及既有單元 / 情境測試（`wsConnection.test.ts` 的 backoff / idle-timeout / reconnect+resubscribe 皆以 VirtualClock 決定性驗證）替代；本次手動驗證沒有真的拔斷本機網路（環境限制）。
+  - `promote`/`release` 已實作參照計數與 `WARMING_UP`，但尚未接上 `settlement-session`（B3 跨 change 假設，依規劃屬 Paper Runtime 主迴圈 change）。
+  - `ConnectionPool` 的 `unsubscribe`（部分合約取消訂閱但連線仍有其他訂閱者）目前只刪除本地參照計數，未送出 `UNSUBSCRIBE` 訊框（`marketDataService.ts` 的 `unsubscribeShortlist` 註解已標註，留待入圍層接上真實場次時補強）。
+  - Bybit `orderbook.50` 的 `prev_sequence` 轉換（`u - 1`）未逐檔對照官方文件驗證，只以合成 fixture 測試過（`bybit/marketData.test.ts`）。
+  - Bitget 限流規則表沿用研究原型既有假設（每秒 10 次），design.md 本就標記「未查證」，本 change 未能查證官方數字，保持 `verified: false`。
+- **下一步建議**：
+  1. `MarketState` 門檻改為逐所（`Record<ExchangeId, number>` 或由 adapter 的 `fullMarket[].interval_ms` 自動推導 × 3）。
+  2. Paper Runtime 主迴圈 change 串接 `settlement-session` → `marketDataService.promote`/`release`。
+  3. `assets/ARCHITECTURE.md` 重繪（使用者已決定留到所有 change 完成後最後一輪，本 change 刻意不碰）。
+- **需要使用者決定的事**：無（design.md 的 5 個 Open Questions 已在實作中以保守預設值 / 實測回答：Q2 Node 內建 WebSocket 可用；Q4 `data_stale_threshold_ms` 暫用建議值 3,000 ms；Q1/Q3/Q5 維持 design.md 的「本 change 預設不加」）。
 
 ### 2026-10-01（4）— Claude (Opus 5.5) 整合 + 2 個 Sonnet agent（第 1b 波）
 - **做了什麼**：整合分支 `integration/wave-1b`：
