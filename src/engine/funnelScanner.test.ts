@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { runFunnelScan } from './funnelScanner';
+import { DEFAULT_FEE_TABLE } from '../../runtime/src/accounting/feeConfig';
 
 // 固定基準時間：距 08:00 UTC 結算 30 分鐘，1h / 4h / 8h 合約倒數皆為 1800 秒
 const NOW = Date.UTC(2026, 0, 1, 7, 30, 0);
@@ -39,9 +40,17 @@ describe('runFunnelScan', () => {
     expect(others.every((c) => c.funnel_stage === 'Level1_Top20')).toBe(true);
   });
 
-  it('[Q-06] 現況：固定 0.20% 費用拖累', () => {
-    // 修正後預期：費用依各所實際 taker fee 與名目計算（見 issue/Q-06）
+  it('[Q-06] 修正後：費用依 Fee Engine 計算（Pionex/Binance 皆 VIP0 taker 0.05%，數值巧合仍為 0.0020）', () => {
     expect(result.level1_candidates.every((c) => c.fee_drag_pct === 0.002)).toBe(true);
+  });
+
+  it('[Q-06] fee_drag_pct 不再是寫死常數：換一組費率表後數值隨之改變', () => {
+    const overriddenTable = DEFAULT_FEE_TABLE.map((row) =>
+      row.exchange === 'Pionex' || row.exchange === 'Binance' ? { ...row, taker_fee: 0.001 } : row,
+    );
+    const overridden = runFunnelScan(NOW, 1000, overriddenTable);
+    expect(overridden.level1_candidates.every((c) => c.fee_drag_pct === 0.004)).toBe(true); // 4 x 0.001
+    expect(overridden.level1_candidates[0].fee_drag_pct).not.toBe(result.level1_candidates[0].fee_drag_pct);
   });
 
   it('結算倒數依週期對齊', () => {

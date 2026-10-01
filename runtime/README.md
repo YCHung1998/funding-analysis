@@ -16,6 +16,10 @@
 | `runtime/src/types/` | `trading-schema-types` |
 | `runtime/src/clock/`、`scheduler/`、`session/`、`opportunity/`、`venue/`、`funding/`（純邏輯：時鐘、排程、結算場次、機會失效、交易所結算規則、資金費確認） | `paper-trading-event-loop` |
 | `runtime/src/market/instruments/` | `instrument-registry` |
+| `runtime/src/risk/` | `risk-engine-kill-switch` |
+| `runtime/src/accounting/` | `net-cost-model` |
+| `runtime/src/market/`（不含 `instruments/`）、`runtime/src/adapters/` | `websocket-data-layer` |
+| `runtime/src/storage/`、`runtime/src/telemetry/` | `trading-event-store` |
 | `runtime/test/architecture.test.ts`、本檔 | 共用骨架（修改需在 PR 說明） |
 
 非擁有者需要的型別若尚未合併，先在**自己目錄內**宣告本地型別並加 `// TODO(trading-schema-types): 合併後改為 import`，不得在 `runtime/src/types/` 建立同名檔案。

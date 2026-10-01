@@ -125,7 +125,7 @@ describe('buildLiveScanCandidates', () => {
     expect(result.every((c) => c.volume_24h !== 10_000_000)).toBe(true);
   });
 
-  it('candidates with matched pairs include new alignment fields and are ranked by spread', () => {
+  it('candidates with matched pairs include new alignment fields and are ranked by net spread (net-cost-model)', () => {
     const a = makeInstrument({ instrument_id: 'Binance:ZUSDT', exchange: 'Binance', native_symbol: 'ZUSDT', instrument_key: 'Z/USDT:USDT' });
     const b = makeInstrument({
       instrument_id: 'Bybit:ZUSDT',
@@ -145,5 +145,64 @@ describe('buildLiveScanCandidates', () => {
     expect(result[0].rank).toBe(1);
     expect(result[0].long_funding_time).toBeTypeOf('number');
     expect(result[0].short_funding_time).toBeTypeOf('number');
+    // net-cost-model 新欄位
+    expect(result[0].net_spread_pct).toBeTypeOf('number');
+    expect(result[0].pair_net_spreads).toBeDefined();
+    expect(result[0].slippage_model.long).toBe('LEGACY_VOLUME_TIER');
+    expect(result[0].slippage_model.short).toBe('LEGACY_VOLUME_TIER');
+    expect(result[0].fee_config_version).toBeTruthy();
+    expect(result[0].entry_basis_pct).toBeTypeOf('number');
+  });
+
+  it('[spec] 毛 spread 最大者不再排第一（Q-06 MEW）：best_pair / sort 依淨值而非毛 spread', () => {
+    const xLong = makeInstrument({ instrument_id: 'Binance:XUSDT', exchange: 'Binance', native_symbol: 'XUSDT', instrument_key: 'X/USDT:USDT' });
+    const xShort = makeInstrument({
+      instrument_id: 'Bybit:XUSDT',
+      exchange: 'Bybit',
+      native_symbol: 'XUSDT',
+      instrument_key: 'X/USDT:USDT',
+      funding: { ...xLong.funding, next_funding_time: xLong.funding.next_funding_time },
+    });
+    const yLong = makeInstrument({ instrument_id: 'Binance:YUSDT', exchange: 'Binance', native_symbol: 'YUSDT', instrument_key: 'Y/USDT:USDT' });
+    const yShort = makeInstrument({
+      instrument_id: 'Bybit:YUSDT',
+      exchange: 'Bybit',
+      native_symbol: 'YUSDT',
+      instrument_key: 'Y/USDT:USDT',
+      funding: { ...yLong.funding, next_funding_time: yLong.funding.next_funding_time },
+    });
+
+    const instrumentsByKey = new Map([
+      ['X/USDT:USDT', [xLong, xShort]],
+      ['Y/USDT:USDT', [yLong, yShort]],
+    ]);
+    // X: 毛 0.0040（較大），量能低 (1M -> 最低一級滑價 0.0005/腿，四筆合計 2.0 USDT)，手續費 2.1 USDT
+    //    -> funding 4.0 - slippage 2.0 - fees 2.1 = net -0.1 USDT (< 0)
+    // Y: 毛 0.0030（較小），量能高 (150M -> 0.00015/腿，四筆合計 0.6 USDT)，手續費 2.1 USDT
+    //    -> funding 3.0 - slippage 0.6 - fees 2.1 = net 0.3 USDT (> 0)：毛 spread 較小但淨值較高
+    const legData = new Map([
+      ['Binance:XUSDT', { rate: 0, mark: 1, volume_24h: 1_000_000 }],
+      ['Bybit:XUSDT', { rate: 0.004, mark: 1, volume_24h: 1_000_000 }],
+      ['Binance:YUSDT', { rate: 0, mark: 1, volume_24h: 150_000_000 }],
+      ['Bybit:YUSDT', { rate: 0.003, mark: 1, volume_24h: 150_000_000 }],
+    ]);
+
+    const result = buildLiveScanCandidates({ instrumentsByKey, legData, ...OPTS });
+    const x = result.find((c) => c.instrument_key === 'X/USDT:USDT')!;
+    const y = result.find((c) => c.instrument_key === 'Y/USDT:USDT')!;
+    expect(x).toBeDefined();
+    expect(y).toBeDefined();
+    expect(y.rank!).toBeLessThan(x.rank!);
+    expect(x.meets_threshold).toBe(false);
+    expect(y.meets_threshold).toBe(true);
+
+    // [Integrator review] pct fields MUST reconcile with expected_net_pnl_usdt using a single,
+    // consistent single-leg notional (target_notional_per_leg_usdt) — not a mix of 1x and 2x.
+    for (const candidate of [x, y]) {
+      const notional = candidate.target_notional_per_leg_usdt;
+      const reconstructedNetUsdt =
+        candidate.spread * notional - candidate.fee_drag_pct * notional - candidate.est_slippage_pct * notional + candidate.entry_basis_pct * 0; // basis=0 in this fixture (mark=mid=1 both legs)
+      expect(reconstructedNetUsdt).toBeCloseTo(candidate.expected_net_pnl_usdt, 9);
+    }
   });
 });

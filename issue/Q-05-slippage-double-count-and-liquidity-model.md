@@ -55,6 +55,6 @@ const totalSlippagePct = estSlippagePct * 4;
 - 參考：Wikipedia Market impact — 「proportional to the square root of traded volume」。
 
 ## 驗收條件
-- [ ] 單元測試：`simulateExecutionExperiment`，兩腿費率相同（funding 0）、無漂移、`custom_entry_slippage = 0.0003`、fee = 0 → `net_pnl ≈ −1.20`（±0.01），目前約 −2.40。
-- [ ] live-scan 每個 candidate 帶 `long_half_spread_pct`、`short_half_spread_pct`，且 `est_slippage_pct >= 2×(兩腿半價差和)`。
+- [x] 單元測試：`simulateExecutionExperiment`，兩腿費率相同（funding 0）、無漂移、`custom_entry_slippage = 0.0003`、fee = 0 → `net_pnl ≈ −1.20`（±0.01），目前約 −2.40。（2026-10-01 `net-cost-model` 已修正）
+- [ ] live-scan 每個 candidate 帶 `long_half_spread_pct`、`short_half_spread_pct`，且 `est_slippage_pct >= 2×(兩腿半價差和)`。（`websocket-data-layer` 已把真實盤口接進 Runtime `orderBookService`；研究端 live-scan 還沒接上，目前仍為 `LEGACY_VOLUME_TIER`，待下一輪決定是否接線）
 - [ ] 對 SONYUSDT 類價差 > 0.2% 的合約，`est_slippage_pct` ≥ 0.4%。

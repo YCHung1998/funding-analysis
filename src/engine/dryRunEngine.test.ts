@@ -45,8 +45,9 @@ describe('executeDryRunSimulation：正常情境', () => {
 
     const t = r.cost_table;
     expect(t.position).toEqual({ leg_long: 1000, leg_short: 1000, total: 2000 });
-    expect(t.entry_fee).toEqual({ leg_long: 0.5, leg_short: 0.5, total: 1 });
-    expect(t.exit_fee).toEqual({ leg_long: 0.5, leg_short: 0.5, total: 1 });
+    // P9 fix: fee 依 Fee Engine 預設費率表（Binance taker 0.05% / Bybit taker 0.055%），不再兩腿寫死 0.05%
+    expect(t.entry_fee).toEqual({ leg_long: 0.5, leg_short: 0.55, total: 1.05 });
+    expect(t.exit_fee).toEqual({ leg_long: 0.5, leg_short: 0.55, total: 1.05 });
     // 單腿滑價 = est_slippage_pct × 0.25 × notional = 0.2
     expect(t.entry_slippage.leg_long).toBeCloseTo(0.2, 9);
     expect(t.entry_slippage.total).toBeCloseTo(0.4, 9);
@@ -56,8 +57,8 @@ describe('executeDryRunSimulation：正常情境', () => {
     expect(t.funding_pnl.leg_long).toBeCloseTo(-0.1, 9);
     expect(t.funding_pnl.leg_short).toBeCloseTo(2.1, 9);
     expect(t.net_pnl.leg_long).toBeCloseTo(-1.42, 9);
-    expect(t.net_pnl.leg_short).toBeCloseTo(0.61, 9);
-    expect(t.net_pnl.total).toBeCloseTo(-0.81, 9);
+    expect(t.net_pnl.leg_short).toBeCloseTo(0.51, 9);
+    expect(t.net_pnl.total).toBeCloseTo(-0.91, 9);
   });
 
   it('[Q-08][P7] 現況：延遲依交易所名稱寫死', () => {

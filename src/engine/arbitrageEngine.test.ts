@@ -3,6 +3,7 @@ import {
   DEFAULT_CONFIG,
   enrichKlineBar,
   estimateSlippageRate,
+  resolveLegFeeRates,
   simulateExecutionExperiment,
 } from './arbitrageEngine';
 import type { CommonFundingRecord, ExchangeId, SettlementWindowBar, WindowOffset } from '../types/schema';
@@ -96,10 +97,34 @@ describe('estimateSlippageRate', () => {
   });
 });
 
+describe('resolveLegFeeRates', () => {
+  it('[Scenario] ExecutionSimulator 手續費依腿別對應（Q-06）：Pionex 為 short 腿，short 端 0.0006、long 端 0.0005', () => {
+    const { pionexFeeRate, binanceFeeRate } = resolveLegFeeRates({
+      pionexIsShort: true,
+      longFeeRate: 0.0005,
+      shortFeeRate: 0.0006,
+    });
+    expect(pionexFeeRate).toBeCloseTo(0.0006, 9); // Pionex is the short leg -> gets the short-end fee
+    expect(binanceFeeRate).toBeCloseTo(0.0005, 9);
+    expect(1000 * pionexFeeRate).toBeCloseTo(0.6, 9);
+    expect(1000 * binanceFeeRate).toBeCloseTo(0.5, 9);
+  });
+
+  it('Pionex 為 long 腿時手續費對調（不再是固定 longFee -> pionex 的錯置）', () => {
+    const { pionexFeeRate, binanceFeeRate } = resolveLegFeeRates({
+      pionexIsShort: false,
+      longFeeRate: 0.0005,
+      shortFeeRate: 0.0006,
+    });
+    expect(pionexFeeRate).toBeCloseTo(0.0005, 9);
+    expect(binanceFeeRate).toBeCloseTo(0.0006, 9);
+  });
+});
+
 describe('simulateExecutionExperiment', () => {
   const zeroFeeConfig = { ...DEFAULT_CONFIG, pionex_taker_fee: 0, binance_taker_fee: 0, custom_entry_slippage: 0.0003 };
 
-  it('[Q-05] 現況：滑價被扣兩次，net_pnl ≈ −2.40', () => {
+  it('[Q-05] 修正後：滑價已反映在成交價，net_pnl 不再重複扣除，≈ −1.20', () => {
     const result = simulateExecutionExperiment(
       record('Pionex', 0.0001),
       record('Binance', 0.0001),
@@ -108,10 +133,12 @@ describe('simulateExecutionExperiment', () => {
       zeroFeeConfig,
     );
     expect(result.price_pnl).toBeCloseTo(-1.200000108, 9);
+    // total_slippage 保留為歸因顯示欄位，不再從 net 扣除
     expect(result.total_slippage).toBeCloseTo(1.2, 9);
     expect(result.funding_pnl).toBeCloseTo(0, 9);
-    // 修正後預期：≈ −1.20（見 issue/Q-05 驗收條件；滑價已反映在成交價，不應再另外扣除）
-    expect(result.net_pnl).toBeCloseTo(-2.400000108, 9);
+    // 修正前（現況）為 ≈ −2.40（滑價被扣兩次）；修正後 net = gross - fee，不再減 total_slippage
+    expect(result.net_pnl).toBeCloseTo(-1.200000108, 2);
+    expect(result.net_pnl).not.toBeCloseTo(-2.400000108, 2);
   });
 
   it('費率相同時 Pionex 做空', () => {

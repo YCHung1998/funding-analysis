@@ -171,9 +171,9 @@ npm run check          # 本機 CI：lint → build → test，任一步失敗�
 1. ~~結算週期未正規化~~ ✅ 已修正（2026-10-01，`instrument-registry`）：即時掃描只配對兩腿下次結算時間差 ≤ 60 秒的組合，週期取各所回傳值。
 2. ~~兩所結算時間可能不同~~ ✅ 已修正：逐腿比對結算時間，不對齊的組合不會出現。
 3. ~~成交量只來自 Binance、缺值填 1,000 萬~~ ✅ 已修正：每腿使用自己交易所的 24h 量，缺值直接淘汰。（最低流動性門檻仍待決，HANDOFF §8）
-4. **滑價估計在即時掃描中是依成交量分三級的常數**（0.015% / 0.03% / 0.05% 每腿），沒有看盤口深度。
+4. **即時掃描的滑價仍是過渡估計**：Runtime 已改用盤口深度（`net-cost-model` 的 `slippageEngine`），`websocket-data-layer` 也已把真實盤口接進 Runtime（`orderBookService`），但**即時掃描 `server/liveScanMath.ts` 讀的是研究端自己的資料，還沒接上 Runtime 的盤口**，暫以成交量分三級的常數估計（明確標示 `LEGACY_VOLUME_TIER`），待後續 change 把兩邊接起來。
 5. ~~`1000PEPE` 類合約倍數未換算~~ ✅ 已修正：以 Instrument Registry 的統一 ID 與價格倍數配對，反向合約不再併入線性合約。
-6. **手續費一律假設 taker 0.05%**，未依各所實際費率 / VIP 等級。
+6. **手續費**已依交易所與 maker / taker 取費率（`runtime/src/accounting/feeConfig.ts`），但預設費率表為第三方整理，**尚未對照各所官方頁面查證**（待定）。
 7. **研究原型的自動化測試是「特性測試」**：鎖住現有輸出（含已知 bug，測試名稱標 `[Q-xx] 現況`），不代表結果正確。新的 Paper Trading Runtime（`runtime/`）與 Paper UI 則是依規格先寫測試再實作。
 
 ## 6. 核心公式
@@ -183,8 +183,8 @@ npm run check          # 本機 CI：lint → build → test，任一步失敗�
 | Spread | `abs(rate_A − rate_B)`（小數，0.0025 = 0.25%） | `server/liveScanMath.ts`（`findBestPair`）、`funnelScanner.ts` |
 | 方向 | 低費率所做多、高費率所做空 | 同上 |
 | 資金費損益 | 多方 `−N × rate_long`；空方 `+N × rate_short` | `arbitrageEngine.ts`、`dryRunEngine.ts` |
-| 手續費拖累 | `2 × (taker_A + taker_B)`，預設 = 0.20% | `SensitivityMatrix.tsx` |
-| 預期淨利 | `spread − fee_drag − 4 × slip_per_leg` | `server/liveScanMath.ts`（`computeLiveScanNetPnl`） |
+| 手續費 | 4 筆成交依各所費率表計算（`fee_drag_pct` = 手續費 / 單腿名目） | `runtime/src/accounting/feeEngine.ts`；`SensitivityMatrix.tsx` 為手動調整的示意（預設各 0.05%） |
+| 預期淨利 | `資金費 + 價差損益（不利跨所價差 + 滑價）− 手續費 − 價差風險`；即時掃描以淨值排序與判門檻 | `runtime/src/accounting/expectedNet.ts`（`estimateExpectedNet`），即時掃描經 `server/liveScanMath.ts` |
 | 滑價模型（研究用） | `½ × bid-ask% + vol% × 0.12 × clamp(shock×0.5, 0.8, 2.5)`，下限 1bp | `arbitrageEngine.ts:51` |
 | 量能衝擊 | `T 棒量 / avg(T-2m, T-1m 量)` | `arbitrageEngine.ts` |
 
