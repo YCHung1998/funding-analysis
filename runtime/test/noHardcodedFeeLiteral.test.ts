@@ -13,6 +13,11 @@ const LIVE_SCAN_MATH_FILE = resolve(REPO_ROOT, 'server/liveScanMath.ts');
 
 const FEE_LITERALS = ['0.0005', '0.00055', '0.0006', '0.0020', '0.002'];
 
+// A literal only counts as a hardcoded FEE if it appears on a line that textually mentions "fee"
+// (case-insensitive) — this file legitimately uses 0.0005 as a *slippage* tier threshold via the
+// sanctioned `LEGACY_VOLUME_TIER` transitional path (design.md Decision 3/9), which is not a fee.
+const FEE_CONTEXT_PATTERN = /fee/i;
+
 function sourceFiles(dir: string): string[] {
   let entries: string[];
   try {
@@ -34,13 +39,16 @@ function stripComments(code: string): string {
 function findLiteralViolations(files: string[]): string[] {
   const violations: string[] = [];
   for (const file of files) {
-    const code = stripComments(readFileSync(file, 'utf8'));
-    for (const literal of FEE_LITERALS) {
-      const pattern = new RegExp(`(?<![0-9.])${literal.replace('.', '\\.')}(?![0-9])`);
-      if (pattern.test(code)) {
-        violations.push(`${relative(REPO_ROOT, file)} contains fee literal ${literal}`);
+    const lines = stripComments(readFileSync(file, 'utf8')).split('\n');
+    lines.forEach((line, idx) => {
+      if (!FEE_CONTEXT_PATTERN.test(line)) return;
+      for (const literal of FEE_LITERALS) {
+        const pattern = new RegExp(`(?<![0-9.])${literal.replace('.', '\\.')}(?![0-9])`);
+        if (pattern.test(line)) {
+          violations.push(`${relative(REPO_ROOT, file)}:${idx + 1} contains fee literal ${literal}`);
+        }
       }
-    }
+    });
   }
   return violations;
 }

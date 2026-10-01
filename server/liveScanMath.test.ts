@@ -90,31 +90,54 @@ describe('findBestPair', () => {
   });
 });
 
-describe('computeLiveScanNetPnl', () => {
-  it('[Q-05][P4] 現況：量能三級滑價', () => {
-    // 修正後預期：滑價依盤口深度逐筆估算（net-cost-model），不以 24h 量三級常數代替
-    expect(computeLiveScanNetPnl(0.004, 150_000_000).estSlippagePct).toBeCloseTo(0.0006, 12);
-    expect(computeLiveScanNetPnl(0.004, 50_000_000).estSlippagePct).toBeCloseTo(0.0012, 12);
-    expect(computeLiveScanNetPnl(0.004, 10_000_000).estSlippagePct).toBeCloseTo(0.002, 12);
+describe('computeLiveScanNetPnl（net-cost-model：改呼叫 estimateExpectedNet，不再以量能三級常數 / 固定 0.20% 計算）', () => {
+  function pair(longRate: number, shortRate: number, longVolume24h: number, shortVolume24h: number) {
+    return computeLiveScanNetPnl({
+      longExchange: 'Binance',
+      shortExchange: 'Bybit',
+      longRate,
+      shortRate,
+      longMark: 100,
+      shortMark: 100,
+      longVolume24h,
+      shortVolume24h,
+    });
+  }
+
+  it('[Q-05][P4] 修正後：滑價以 LEGACY_VOLUME_TIER 標示（過渡期），非默默常數替代，且每腿各自依量能分級', () => {
+    const result = pair(0, 0.004, 150_000_000, 150_000_000);
+    expect(result.slippageModel.long).toBe('LEGACY_VOLUME_TIER');
+    expect(result.slippageModel.short).toBe('LEGACY_VOLUME_TIER');
+    // 四筆合計滑價歸因（>100M tier：每筆 0.00015 × 100 × 10 = 0.15, 四筆 0.60）
+    expect(Math.abs(result.slippageAttributionUsdt)).toBeCloseTo(0.6, 9);
   });
 
-  it('量能級距邊界為嚴格大於', () => {
-    expect(computeLiveScanNetPnl(0.004, 100_000_000).estSlippagePct).toBeCloseTo(0.0012, 12);
-    expect(computeLiveScanNetPnl(0.004, 20_000_000).estSlippagePct).toBeCloseTo(0.002, 12);
+  it('量能級距邊界為嚴格大於（沿用原三級常數作為過渡期滑價輸入）', () => {
+    const higherTier = pair(0, 0.004, 100_000_000, 100_000_000); // 100M 不嚴格大於 -> 次一級
+    const lowerVolume = pair(0, 0.004, 20_000_000, 20_000_000); // 20M 不嚴格大於 -> 最低一級
+    expect(Math.abs(higherTier.slippageAttributionUsdt)).toBeCloseTo(1.2, 9); // 4 x 0.0003 x 100 x 10
+    expect(Math.abs(lowerVolume.slippageAttributionUsdt)).toBeCloseTo(2.0, 9); // 4 x 0.0005 x 100 x 10
   });
 
-  it('[Q-06] 現況：固定 0.20% 費用與淨值計算', () => {
-    // 修正後預期：費用依各所實際 taker fee 計算（見 issue/Q-06）
-    const result = computeLiveScanNetPnl(0.004, 150_000_000);
-    expect(result.feeDragPct).toBe(0.002);
-    expect(result.expectedNetPnlPct).toBeCloseTo(0.0014, 12);
-    expect(result.expectedNetPnlUsdt).toBeCloseTo(1.4, 9);
+  it('[Q-06] 修正後：費用依各所實際 taker fee 計算（Binance 0.05% / Bybit 0.055%），不再是固定 0.20%', () => {
+    // Binance long(0) × Bybit short(0.004), mark 100 兩腿, notional 1000, qty 10:
+    // funding = 4.0（= spread x notional）; fees = 2x(1000x0.0005) + 2x(1000x0.00055) = 2.1;
+    // slippage（>100M tier, 4 筆 x 0.15）= -0.60; net = 4.0 - 0.60 - 2.1 = 1.30
+    const result = pair(0, 0.004, 150_000_000, 150_000_000);
+    expect(result.expectedFeesUsdt).toBeCloseTo(2.1, 9);
+    expect(result.expectedFundingUsdt).toBeCloseTo(4.0, 9);
+    expect(result.expectedNetPnlUsdt).toBeCloseTo(1.3, 9);
+    expect(result.netSpreadPct).toBeCloseTo(0.0013, 9);
     expect(result.meetsThreshold).toBe(true);
   });
 
-  it('門檻判定包含等號', () => {
-    expect(computeLiveScanNetPnl(0.002, 150_000_000).meetsThreshold).toBe(true);
-    expect(computeLiveScanNetPnl(0.0019, 150_000_000).meetsThreshold).toBe(false);
+  it('門檻判定（research_min_net_pnl_usdt 預設 0）', () => {
+    expect(pair(0, 0.004, 150_000_000, 150_000_000).meetsThreshold).toBe(true); // net = 1.30 >= 0
+    expect(pair(0, 0, 150_000_000, 150_000_000).meetsThreshold).toBe(false); // zero spread: fees+slippage > funding(0)
+  });
+
+  it('不得默默產生獲利數字：NaN rate 輸入拋出', () => {
+    expect(() => pair(NaN, 0.004, 150_000_000, 150_000_000)).toThrow(TypeError);
   });
 });
 

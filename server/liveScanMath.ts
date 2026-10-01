@@ -6,6 +6,10 @@
  * No side effects on import: no Express, no Vite, no .env, no fetch.
  */
 
+import type { ExchangeId } from '../runtime/src/types/ids';
+import { estimateExpectedNet, type BookQuoteInput, type ExpectedNetConfig } from '../runtime/src/accounting/expectedNet';
+import type { SlippageModel } from '../runtime/src/accounting/slippageEngine';
+
 /**
  * Normalizes symbols into standard base symbol (e.g. BTC_USDT_PERP -> BTC, BTC-USDT-SWAP -> BTC, 1000PEPEUSDT -> PEPE)
  */
@@ -83,23 +87,98 @@ export function resolveSettlement(
   return { nextFundingTime, timeToSettlementSec, intervalHours };
 }
 
-export function computeLiveScanNetPnl(maxSpread: number, volume24h: number): {
-  estSlippagePct: number;
-  feeDragPct: number;
-  expectedNetPnlPct: number;
+/**
+ * net-cost-model fix (Q-05[P4]: volume-tier slippage constant; Q-06: fixed 0.20% fee):
+ * per-leg "legacy" slippage percentage derived from 24h volume. Research-only transitional
+ * input to `estimateExpectedNet`'s `LEGACY_VOLUME_TIER` book-quote kind (design.md Decision 3/9)
+ * — kept as the SAME three-tier thresholds as the pre-fix constant so the only change is *where*
+ * the number is consumed (cost-model formula) rather than *what* the number is; a real
+ * bid/ask-based `TOP_OF_BOOK`/`ORDERBOOK` model is out of scope here (Non-goal: no WebSocket
+ * order book subscription in this change).
+ */
+function legacyVolumeTierSlippagePct(volume24h: number): number {
+  return volume24h > 100_000_000 ? 0.00015 : volume24h > 20_000_000 ? 0.0003 : 0.0005;
+}
+
+export interface LiveScanNetPnlInput {
+  longExchange: ExchangeId;
+  shortExchange: ExchangeId;
+  longRate: number;
+  shortRate: number;
+  longMark: number;
+  shortMark: number;
+  longVolume24h: number;
+  shortVolume24h: number;
+  targetNotionalPerLegUsdt?: number;
+  qtyStepLong?: number;
+  qtyStepShort?: number;
+}
+
+export interface LiveScanNetPnlResult {
+  netSpreadPct: number;
+  grossSpreadPct: number;
   expectedNetPnlUsdt: number;
+  expectedFeesUsdt: number;
+  expectedFundingUsdt: number;
+  slippageAttributionUsdt: number;
+  slippageModel: { long: SlippageModel; short: SlippageModel };
+  feeConfigVersion: string;
+  entryBasisPct: number;
   meetsThreshold: boolean;
-} {
-      const estSlippagePct = volume24h > 100000000 ? 0.00015 : volume24h > 20000000 ? 0.0003 : 0.0005;
-      const totalSlippagePct = estSlippagePct * 4;
-      const fixedFeeDragPct = 0.0020; // 0.20%
-      const expectedNetPnlPct = maxSpread - fixedFeeDragPct - totalSlippagePct;
+  qualified: boolean;
+}
+
+/**
+ * Research live-scan 版 Expected Net PnL：改呼叫 `runtime/src/accounting/expectedNet.ts` 的
+ * `estimateExpectedNet`（cost-model spec「研究端 live-scan 使用成本模型」），費率取預設費率表、
+ * 滑價以 `LEGACY_VOLUME_TIER` 標示（過渡期）。`meetsThreshold = expected_net_pnl_usdt >=
+ * researchMinNetPnlUsdt`（預設 0，取代舊的 `maxSpread >= 0.0020` 毛 spread 判定）。
+ */
+export function computeLiveScanNetPnl(input: LiveScanNetPnlInput, researchMinNetPnlUsdt = 0): LiveScanNetPnlResult {
+  const targetNotional = input.targetNotionalPerLegUsdt ?? 1000;
+  // 待定：研究端沒有真實 instrument-registry qty_step，暫以 0.0001 近似（細粒度捨去誤差可忽略）。
+  const qtyStepLong = input.qtyStepLong ?? 0.0001;
+  const qtyStepShort = input.qtyStepShort ?? 0.0001;
+
+  const config: ExpectedNetConfig = {
+    slippage_safety_buffer_pct: 0,
+    liquidity_assumption: 'TAKER',
+    basis_convergence_assumption: 'ADVERSE_ONLY',
+    basis_risk_z: 1,
+    basis_sigma_pct: 0, // 待定：研究端尚無歷史資料可校準 basis_sigma_pct，暫以 0（不折價）
+  };
+
+  const longQuote: BookQuoteInput = {
+    kind: 'LEGACY_VOLUME_TIER',
+    slippagePct: legacyVolumeTierSlippagePct(input.longVolume24h),
+    referencePrice: input.longMark,
+  };
+  const shortQuote: BookQuoteInput = {
+    kind: 'LEGACY_VOLUME_TIER',
+    slippagePct: legacyVolumeTierSlippagePct(input.shortVolume24h),
+    referencePrice: input.shortMark,
+  };
+
+  const result = estimateExpectedNet({
+    long: { exchange: input.longExchange, mid_price: input.longMark, mark_price: input.longMark, predicted_rate: input.longRate, quote: longQuote },
+    short: { exchange: input.shortExchange, mid_price: input.shortMark, mark_price: input.shortMark, predicted_rate: input.shortRate, quote: shortQuote },
+    target_notional_per_leg_usdt: targetNotional,
+    qty_step_long: qtyStepLong,
+    qty_step_short: qtyStepShort,
+    config,
+  });
 
   return {
-    estSlippagePct: totalSlippagePct,
-    feeDragPct: fixedFeeDragPct,
-    expectedNetPnlPct,
-    expectedNetPnlUsdt: 1000 * expectedNetPnlPct,
-    meetsThreshold: maxSpread >= 0.0020,
+    netSpreadPct: result.net_spread_pct,
+    grossSpreadPct: result.gross_spread_pct,
+    expectedNetPnlUsdt: result.expected_net_pnl_usdt,
+    expectedFeesUsdt: result.expected_fees_usdt,
+    expectedFundingUsdt: result.expected_funding_usdt,
+    slippageAttributionUsdt: result.expected_slippage_attribution_usdt,
+    slippageModel: result.slippage_model,
+    feeConfigVersion: result.fee_config_version,
+    entryBasisPct: result.entry_basis_pct,
+    meetsThreshold: result.qualified && result.expected_net_pnl_usdt >= researchMinNetPnlUsdt,
+    qualified: result.qualified,
   };
 }

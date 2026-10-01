@@ -16,6 +16,8 @@
  */
 
 import { FunnelCandidate, FundingIntervalHours } from '../types/systemSpec';
+import { DEFAULT_FEE_TABLE, type FeeTierConfig } from '../../runtime/src/accounting/feeConfig';
+import { feeRate } from '../../runtime/src/accounting/feeEngine';
 
 export const RAW_UNIVERSE_SYMBOLS = [
   { symbol: 'PEPEUSDT', interval: 4 as FundingIntervalHours, vol: 185000000, pRate: 0.0042, bRate: 0.0006, depthUsd: 1200000, slip: 0.0004 },
@@ -38,12 +40,22 @@ export const RAW_UNIVERSE_SYMBOLS = [
 /**
  * Executes the 3-Level Funnel Evaluation
  */
-export function runFunnelScan(currentTime: number = Date.now(), notional: number = 1000): {
+export function runFunnelScan(
+  currentTime: number = Date.now(),
+  notional: number = 1000,
+  feeTable: readonly FeeTierConfig[] = DEFAULT_FEE_TABLE,
+): {
   level1_candidates: FunnelCandidate[];
   level2_top3: FunnelCandidate[];
   level3_selected: FunnelCandidate;
 } {
-  const fixedTakerFeeDragPct = 0.0020; // 0.20% (4 trades x 0.05%)
+  // Q-06 fix: fee drag is computed from the shared Fee Engine's default table (both legs assumed
+  // TAKER, entry + exit = 2 fills each), not a hardcoded literal. For Pionex/Binance VIP0 taker
+  // (0.05% each) this numerically still comes out to 0.0020 — the fix is architectural (no longer
+  // a literal that can drift from the real fee table), not a value change.
+  const pionexTakerFee = feeRate('Pionex', 'TAKER', feeTable);
+  const binanceTakerFee = feeRate('Binance', 'TAKER', feeTable);
+  const fixedTakerFeeDragPct = 2 * (pionexTakerFee + binanceTakerFee);
 
   // 1. Level 1 Evaluation: Broad Market Scan
   const evaluatedAll: FunnelCandidate[] = RAW_UNIVERSE_SYMBOLS.map((item, idx) => {

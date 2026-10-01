@@ -22,7 +22,7 @@
 
 ## 5. 研究端修正與過渡
 
-- [ ] 5.1 `arbitrageEngine.ts` Q-05 修正：先把特性測試期望改為 `≈ −1.20` 並確認紅燈，再改 `net = gross − fee`、腿別 net 同步、`total_slippage` 保留為歸因、預設費率改取費率表；`ExecutionSimulator` 手續費依腿別交易所對應並加 §20.1 滑價提示
+- [x] 5.1 `arbitrageEngine.ts` Q-05 修正：先把特性測試期望改為 `≈ −1.20` 並確認紅燈，再改 `net = gross − fee`、腿別 net 同步、`total_slippage` 保留為歸因、預設費率改取費率表；`ExecutionSimulator` 手續費依腿別交易所對應並加 §20.1 滑價提示
 - [ ] 5.2 `server/liveScanMath.ts`（`findBestPair`、`computeLiveScanNetPnl`）與 `server.ts` live-scan 改用成本模型：先把 `liveScanMath.test.ts` 的 `[Q-05][P4]` / `[Q-06]` 期望改為淨值口徑並確認紅燈，再實作（預設費率表、Binance bookTicker + 各所 top-of-book、`LEGACY_VOLUME_TIER` 標示、淨值選對 / 排序 / `meets_threshold`、新欄位）；以固定假回應的測試驗證「毛 spread 最大者不再排第一」；`systemSpec.ts` / `liveMarketService.ts` 型別補欄位
 - [ ] 5.3 前端 `FunnelScannerView` 改讀伺服器淨值（`pair_net_spreads`、預設淨值排序、毛 spread 次要欄位、估計值樣式）；`dryRunEngine.ts` 費率改查預設表（P9 bug fix）；README §4 mock / 估計值表同步
 
