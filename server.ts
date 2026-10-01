@@ -10,6 +10,7 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
+import { extractBaseSymbol, findBestPair, resolveSettlement, computeLiveScanNetPnl } from './server/liveScanMath';
 
 dotenv.config();
 
@@ -24,26 +25,6 @@ const CACHE_TTL_MS = 5000;
 
 // In-memory cache for OKX funding rates (30s TTL to prevent spamming individual queries)
 const okxFundingRateCache = new Map<string, { rate: number; nextFundingTime: number; ts: number }>();
-
-/**
- * Normalizes symbols into standard base symbol (e.g. BTC_USDT_PERP -> BTC, BTC-USDT-SWAP -> BTC, 1000PEPEUSDT -> PEPE)
- */
-function extractBaseSymbol(raw: string): string {
-  let s = raw.toUpperCase()
-    .replace('-SWAP', '')
-    .replace('_PERP', '')
-    .replace('_USDT', '')
-    .replace('-USDT', '')
-    .replace('USDT', '')
-    .replace(/[-_]/g, '');
-  
-  if (s.startsWith('1000000')) s = s.replace('1000000', '');
-  else if (s.startsWith('100000')) s = s.replace('100000', '');
-  else if (s.startsWith('10000')) s = s.replace('10000', '');
-  else if (s.startsWith('1000')) s = s.replace('1000', '');
-
-  return s;
-}
 
 export type ExchangeName = 'Pionex' | 'Binance' | 'Bybit' | 'Bitget' | 'OKX';
 
@@ -252,50 +233,14 @@ app.get('/api/market/live-scan', async (_req, res) => {
     const EXCHANGES: ExchangeName[] = ['Pionex', 'Binance', 'Bybit', 'Bitget', 'OKX'];
 
     for (const agg of symbolMap.values()) {
-      const activeExchanges = EXCHANGES.filter(ex => agg.rates[ex] !== undefined);
-      if (activeExchanges.length < 2) continue;
+      const pair = findBestPair(agg.rates, EXCHANGES);
+      if (!pair) continue;
+      const { activeExchanges, maxSpread, bestLongEx, bestShortEx, pairSpreads } = pair;
 
-      let maxSpread = 0;
-      let bestLongEx: ExchangeName = activeExchanges[0];
-      let bestShortEx: ExchangeName = activeExchanges[1];
-
-      const pairSpreads: Record<string, number> = {};
-
-      for (let i = 0; i < activeExchanges.length; i++) {
-        for (let j = i + 1; j < activeExchanges.length; j++) {
-          const exA = activeExchanges[i];
-          const exB = activeExchanges[j];
-          const rateA = agg.rates[exA]!;
-          const rateB = agg.rates[exB]!;
-          const spread = Math.abs(rateA - rateB);
-
-          pairSpreads[`${exA}_${exB}`] = spread;
-
-          if (spread > maxSpread) {
-            maxSpread = spread;
-            if (rateA < rateB) {
-              bestLongEx = exA;
-              bestShortEx = exB;
-            } else {
-              bestLongEx = exB;
-              bestShortEx = exA;
-            }
-          }
-        }
-      }
-
-      const validTimes = Object.values(agg.nextFundingTimes).filter((t): t is number => typeof t === 'number' && t > now);
-      const nextFundingTime = validTimes.length > 0 ? Math.min(...validTimes) : now + 8 * 3600 * 1000;
-      const timeToSettlementSec = Math.max(Math.floor((nextFundingTime - now) / 1000), 0);
-
-      const intervals = Object.values(agg.intervals).filter((v): v is number => typeof v === 'number');
-      const intervalHours = intervals.length > 0 ? Math.min(...intervals) : 8;
+      const { nextFundingTime, timeToSettlementSec, intervalHours } = resolveSettlement(agg.nextFundingTimes, agg.intervals, now);
 
       const volume24h = agg.volume24h;
-      const estSlippagePct = volume24h > 100000000 ? 0.00015 : volume24h > 20000000 ? 0.0003 : 0.0005;
-      const totalSlippagePct = estSlippagePct * 4;
-      const fixedFeeDragPct = 0.0020; // 0.20%
-      const expectedNetPnlPct = maxSpread - fixedFeeDragPct - totalSlippagePct;
+      const netPnl = computeLiveScanNetPnl(maxSpread, volume24h);
 
       matchedCandidates.push({
         symbol: agg.displaySymbol,
@@ -326,11 +271,11 @@ app.get('/api/market/live-scan', async (_req, res) => {
         time_to_settlement_sec: timeToSettlementSec,
         interval_hours: intervalHours,
         volume_24h: volume24h,
-        est_slippage_pct: totalSlippagePct,
-        fee_drag_pct: fixedFeeDragPct,
-        expected_net_pnl_pct: expectedNetPnlPct,
-        expected_net_pnl_usdt: 1000 * expectedNetPnlPct,
-        meets_threshold: maxSpread >= 0.0020,
+        est_slippage_pct: netPnl.estSlippagePct,
+        fee_drag_pct: netPnl.feeDragPct,
+        expected_net_pnl_pct: netPnl.expectedNetPnlPct,
+        expected_net_pnl_usdt: netPnl.expectedNetPnlUsdt,
+        meets_threshold: netPnl.meetsThreshold,
       });
     }
 

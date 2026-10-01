@@ -122,9 +122,15 @@ NODE_ENV=production npm start          # 一樣開 http://localhost:3000
 ### 其他開發指令
 
 ```bash
-npm run lint     # tsc --noEmit 型別檢查
-npm run build    # 打包到 dist/
+npm run lint           # tsc --noEmit 型別檢查（含測試檔）
+npm run build          # 打包到 dist/
+npm test               # vitest 單次執行全部測試（失敗時結束碼非 0）
+npm run test:watch     # 開發時 watch 模式
+npm run test:coverage  # 產生覆蓋率報告到 coverage/（僅報告，不設門檻）
+npm run check          # 本機 CI：lint → build → test，任一步失敗即停止；合併前必須全綠
 ```
+
+測試**不打真實 API**：`vitest.setup.ts` 把 `fetch` 換成會拋錯的替身，需要上游資料的測試一律使用檔案內的固定 fixture；讀 `Date.now()` 的程式以 `vi.setSystemTime` 固定時間。測試檔放在被測模組旁（`*.test.ts`），`src/`、`server/`、`runtime/`、`test/` 下的 `*.test.ts` 會自動被 `npm test` 執行。
 
 ### 關於 API Key
 

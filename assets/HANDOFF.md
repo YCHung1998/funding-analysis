@@ -18,6 +18,7 @@
 npm install --legacy-peer-deps   # 不加會因 esbuild 版本衝突失敗
 npm run lint                     # 基準：通過（0 error）
 npm run build                    # 基準：通過
+npm test                         # 基準：全綠（不打真實 API）；npm run check = lint → build → test
 npm run dev                      # http://localhost:3000
 curl -s localhost:3000/api/market/live-scan | head -c 300   # 應回 success:true
 ```
@@ -96,18 +97,18 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 | ID | 問題 | 位置 | 影響需求 |
 |----|------|------|---------|
 | P1 | 不同結算週期（1h/4h/8h）的費率直接相減；Binance/Bitget/OKX 週期寫死 8 | `server.ts:187,232,247` | #1 |
-| P2 | 兩腿結算時間未檢查是否一致，取 `min(nextFundingTime)` 當 T | `server.ts:287-289` | #1 #3 |
+| P2 | 兩腿結算時間未檢查是否一致，取 `min(nextFundingTime)` 當 T | `server/liveScanMath.ts` `resolveSettlement` | #1 #3 |
 | P3 | 24h 量只取 Binance；缺值填 `10,000,000`（實測 PUFFERUSDT 命中）→ 冷門幣看起來有量 | `server.ts:171` | #1 |
-| P4 | 即時滑價 = 依量分三級常數，未用盤口深度 / K 棒波動 | `server.ts:295` | #2 |
+| P4 | 即時滑價 = 依量分三級常數，未用盤口深度 / K 棒波動 | `server/liveScanMath.ts` `computeLiveScanNetPnl` | #2 |
 | P5 | ~~各所費率欄位語意未對齊~~ **已推翻**：兩者皆為預測值，實際風險見 Q-04。原描述：Binance 用 `lastFundingRate`、Pionex 用 `nextFundingRate`（當期 vs 預測，**需查官方文件確認**） | `server.ts:183,198` | #1 |
-| P6 | `extractBaseSymbol` 去掉 `1000` 前綴但沒換算倍數；且 `replace('USDT','')` 只替換第一次出現 | `server.ts:31-46` | #1 #3 |
+| P6 | `extractBaseSymbol` 去掉 `1000` 前綴但沒換算倍數；且 `replace('USDT','')` 只替換第一次出現 | `server/liveScanMath.ts` `extractBaseSymbol` | #1 #3 |
 | P7 | Dry-run 數值寫死：延遲依交易所名稱三元式、價格漂移固定 ±0.008%、保證金 `$5,000`、風控 r5/r7/r9 永遠 PASS；唯一失敗情境是單腿 429 | `dryRunEngine.ts` | #3 |
 | P8 | 部分成交、API timeout、重試、費率在 T 前翻轉，皆未模擬 | `dryRunEngine.ts` | #3 |
 | P9 | 手續費固定 taker 0.05%，無各所 / maker / VIP 設定 | 多處 | #3 |
 | P10 | 兩套型別並存：`schema.ts` 以 Pionex×Binance 為中心（`pionex_rate`/`binance_rate`），`systemSpec.ts` 以 5 所欄位平鋪；交易所清單在 ≥6 處重複定義 | `types/`、`server.ts`、`liveMarketService.ts` | #4 |
 | P11 | ✅ 可結案（實測 `instId=ANY` 回 717 筆）。OKX 用 `funding-rate?instId=ANY` 批次取費率，實測 OKX 有 467 筆有費率，但此參數行為**未查證官方文件** | `server.ts:98` | #1 |
 | P12 | Local Secret Vault 以明文存 `localStorage` | `LocalSecretsView.tsx:71` | 安全 |
-| P13 | 無測試框架、無任何測試 | — | 全部 |
+| P13 | ✅ 已解（`feature-setup-vitest`，change `setup-vitest`）：vitest 5 + 特性測試基準，`npm run check` 為本機合併門檻。原描述：無測試框架、無任何測試 | — | 全部 |
 | P14 | AI Studio 遺留：`package.json` name=`react-example`、未使用的 `@google/genai`、`GEMINI_API_KEY`、`metadata.json` | 根目錄 | #5 |
 | P15 | `npm install` 需 `--legacy-peer-deps`（devDependency `esbuild@^0.25` 與 vite 8 衝突） | `package.json` | #5 |
 
@@ -128,8 +129,8 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 一個改動要宣稱「完成」，必須全部滿足：
 
 - [ ] 能對應到 §1 的需求編號或 §4.2 的問題 ID
-- [ ] `npm run lint` 與 `npm run build` 通過
-- [ ] 改到公式 / 引擎 / adapter → 有自動化測試，且附「改前失敗、改後通過」證據（測試框架尚未建立，第一個做這件事的人請建 vitest，見 Backlog B0）
+- [ ] `npm run check`（= lint → build → test）全綠
+- [ ] 改到公式 / 引擎 / adapter → 有自動化測試，且附「改前失敗、改後通過」證據；修正已被特性測試鎖住的 bug（測試名稱含 `[Q-xx]` 與「現況」）時，同一 PR 改寫該測試，不得以 `vitest -u` 或刪測試帶過
 - [ ] 改到即時資料 → 實際打一次 `/api/market/live-scan` 並記錄結果
 - [ ] 資料來源有變（mock ↔ live）→ 更新 README §4
 - [ ] 更新本檔 §4.2（解掉的問題標 ✅ 並附 commit）與 §7 交接紀錄
@@ -142,7 +143,7 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 
 | ID | 項目 | 解決 | 規模 |
 |----|------|------|------|
-| B0 | 建立 vitest，先為 `arbitrageEngine`、`extractBaseSymbol`、spread 計算補特性測試（鎖住現有行為） | P13 | S |
+| B0 | ✅ 完成（change `setup-vitest`）：建立 vitest，先為 `arbitrageEngine`、`extractBaseSymbol`、spread 計算補特性測試（鎖住現有行為） | P13 | S |
 | B1 | 修 `npm install` 依賴衝突；清掉 AI Studio 遺留 | P14 P15 | S |
 | B2 | 費率正規化：各所取真實週期，spread 改為「同一結算時點實際收付」或「換算成每小時」比較，並在 UI 標示 | P1 P5 | M |
 | B3 | 結算時間對齊：只配對兩腿結算時間差 ≤ 容忍值（如 60s）的組合 | P2 | S |
@@ -167,6 +168,13 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 - **下一步建議**：<1–3 項，指向 Backlog ID>
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
+
+### 2026-10-01 — Claude (Opus 5.5)
+- **做了什麼**：B0 / P13（OpenSpec change `setup-vitest`，分支 `feature-setup-vitest`，自 `47c6df0` 分出——`develop` 當時尚未含 proposal）。導入 `vitest@5.0.3` + `@vitest/coverage-v8@5.0.3`（peer 支援 vite 8，Open Question 1 不需退回 4.x）；`vitest.config.ts` / `vitest.setup.ts`（fetch 替身拋錯）；scripts `test`、`test:watch`、`test:coverage`、`check`。特性測試 11 檔：`arbitrageEngine`、`funnelScanner`、`dryRunEngine`、6 個 adapter、`server/liveScanMath`、`test/infrastructure`；已知 bug 以 `[Q-01] [Q-02] [Q-05] [Q-06] [Q-08] [P1] [P2] [P4] [P6] [P7]` 標註「現況」。`server.ts` 的 `extractBaseSymbol`、最佳配對、結算時間彙整、Expected Net PnL 逐字搬到 `server/liveScanMath.ts`。
+- **驗證證據**：`npm run check` exit 0（lint ✅、build ✅、11 檔 56 測試 ✅，連跑兩次結果相同）；`openspec validate setup-vitest --strict` ✅；`test:coverage` 行 96% / 分支 87%（僅報告）。測試有效性：每組特性測試皆「暫改期望值或系統時間 → 紅 → 還原 → 綠」；`liveScanMath.test.ts` 先寫時紅（`Cannot find module './liveScanMath'`），搬移後 15/15 綠。`git diff --color-moved=zebra` 確認非搬移行僅為包裝與參數化（`agg.rates`→`rates`、`continue`→`return null`、`ExchangeName`→泛型 `E`）。live-scan 實測：抽出前（main 的 dev server :3000）與抽出後（本分支 :3001）同時請求，皆 805 組、過門檻 7 組、各所計數相同（Pionex 439 / Binance 728 / Bybit 725 / Bitget 707 / OKX 467），頂層與 candidate 欄位集合完全相同；以原內嵌公式重算抽出後 805 筆衍生欄位，0 筆不符。唯一差異 `1000CATUSDT` vs `CATUSDT` 為 P6 既有行為（兩者被併成 `CAT`，顯示名取決於上游回應順序），與抽出無關。
+- **沒做完 / 已知問題**：Q-03（量缺值 1,000 萬，`server.ts` `getOrCreate`）未抽出、未鎖住（Open Question 4 預設）；`npm install` 時 npm 的 allow-scripts 會擋 esbuild postinstall，目前 tsx / vite build 仍可運作。
+- **下一步建議**：`instrument-registry`、`paper-trading-event-loop`、`trading-schema-types` 可並行開工（皆只依賴本 change）。
+- **需要使用者決定的事**：design Open Questions 2（Runtime coverage 門檻）、3（`server/liveScanMath.ts` 位置）。
 
 ### 2026-09-30（5）— Claude (Opus 5.5)
 - **做了什麼**：新增 `docs/TRADING_SYSTEM_SPEC.md`（規格書 v0.2）與 `docs/PAPER_TRADING_TECH_SPEC.md`（技術書 v0.1），並依使用者對 C-01～C-18 的回覆整併（決策紀錄見規格書 §34）；`openspec init --tools claude`（`openspec/config.yaml` 填入專案 context 與規則）；建立 `develop`（來自 `main`）與 `feature-trading-spec-v02`；修訂本檔 Invariant #1 #2、§1 階段、§8；`.env.example` 加入 Bybit / OKX 欄位與規則；UI 上舊的「Spec v0.2」標籤改為 v0.1（C-02）。
