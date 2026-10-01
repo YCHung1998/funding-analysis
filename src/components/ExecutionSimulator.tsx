@@ -9,7 +9,9 @@
 
 import React, { useState } from 'react';
 import { MarketEventDataset } from '../data/mockMarketData';
-import { simulateExecutionExperiment } from '../engine/arbitrageEngine';
+import { resolveLegFeeRates, simulateExecutionExperiment } from '../engine/arbitrageEngine';
+import { feeRate } from '../../runtime/src/accounting/feeEngine';
+import type { ExchangeId } from '../../runtime/src/types/ids';
 import { Clock, ArrowRight, DollarSign, ShieldAlert, Check, RefreshCw, SlidersHorizontal } from 'lucide-react';
 
 interface ExecutionSimulatorProps {
@@ -39,20 +41,20 @@ export const ExecutionSimulator: React.FC<ExecutionSimulatorProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  const getTakerFee = (ex: string) => {
-    switch (ex) {
-      case 'Bybit': return 0.00055;
-      case 'Bitget': return 0.00060;
-      case 'OKX': return 0.00050; // VIP 0 Taker 0.050%
-      default: return 0.00050;
-    }
-  };
+  // Q-06: routed through the shared Fee Engine's default table (no second hardcoded fee source).
+  const getTakerFee = (ex: string) => feeRate(ex as ExchangeId, 'TAKER');
 
   const longFee = getTakerFee(longEx);
   const shortFee = getTakerFee(shortEx);
   const totalFeeRate = 2 * (longFee + shortFee);
 
   const slippageDecimal = customSlippageBps !== null ? customSlippageBps / 10000 : undefined;
+
+  // Q-06 fix: fee rates must track which exchange actually plays the SHORT/LONG leg (decided by
+  // funding-rate comparison inside simulateExecutionExperiment), not a fixed
+  // longFee -> pionex_taker_fee assignment (design.md Decision 9).
+  const pionexIsShort = currentDataset.pionex_common.funding_rate >= currentDataset.binance_common.funding_rate;
+  const { pionexFeeRate, binanceFeeRate } = resolveLegFeeRates({ pionexIsShort, longFeeRate: longFee, shortFeeRate: shortFee });
 
   const tradeResult = simulateExecutionExperiment(
     currentDataset.pionex_common,
@@ -64,8 +66,8 @@ export const ExecutionSimulator: React.FC<ExecutionSimulatorProps> = ({
       entry_offset_sec: -30,
       exit_offset_sec: 30,
       fee_tier: 'lowest_vip0',
-      pionex_taker_fee: longFee,
-      binance_taker_fee: shortFee,
+      pionex_taker_fee: pionexFeeRate,
+      binance_taker_fee: binanceFeeRate,
       research_threshold_spread: 0.0020,
       custom_entry_slippage: slippageDecimal,
       custom_exit_slippage: slippageDecimal,
@@ -371,7 +373,7 @@ export const ExecutionSimulator: React.FC<ExecutionSimulatorProps> = ({
             </h3>
           </div>
           <div className="text-xs font-mono text-slate-400">
-            Formula: Net = Gross - Fees - Slippage
+            Formula: Net = Gross - Fees (✅ C-13; slippage already in Price PnL, not subtracted again)
           </div>
         </div>
 
@@ -405,18 +407,19 @@ export const ExecutionSimulator: React.FC<ExecutionSimulatorProps> = ({
               -${tradeResult.total_fee.toFixed(2)}
             </div>
             <div className="text-[10px] text-slate-500 font-sans">
-              Fixed 0.20% drag on {notional}U
+              Per-exchange taker fee on {notional}U (Q-06 fix: not a fixed 0.20%)
             </div>
           </div>
 
-          {/* Dynamic Slippage Drag */}
+          {/* Slippage attribution only (§20.1): already included in Price PnL above, not a
+              separate Net PnL deduction (✅ C-13 / Q-05 fix). */}
           <div className="bg-slate-950 border border-slate-800 p-3 rounded space-y-1">
-            <div className="text-slate-400 text-[11px]">- Slippage Loss (4 orders)</div>
+            <div className="text-slate-400 text-[11px]">Slippage Attribution (4 orders)</div>
             <div className="text-base font-bold text-amber-400">
               -${tradeResult.total_slippage.toFixed(2)}
             </div>
             <div className="text-[10px] text-slate-500 font-sans">
-              Entry + Exit orderbook penetration
+              已含在 Price PnL 中，不另外扣除（entry + exit orderbook penetration）
             </div>
           </div>
 
@@ -448,14 +451,14 @@ export const ExecutionSimulator: React.FC<ExecutionSimulatorProps> = ({
             <>
               <Check className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
               <div>
-                <strong>Profitable Execution:</strong> The funding spread of {(tradeResult.spread * 100).toFixed(3)}% successfully surmounted the 0.20% fixed taker fee hurdle (-${tradeResult.total_fee.toFixed(2)}) and slippage friction (-${tradeResult.total_slippage.toFixed(2)}), yielding a real net profit of <strong>${tradeResult.net_pnl.toFixed(2)}</strong>.
+                <strong>Profitable Execution:</strong> The funding spread of {(tradeResult.spread * 100).toFixed(3)}% successfully surmounted the per-exchange taker fee hurdle (-${tradeResult.total_fee.toFixed(2)}) even with slippage attribution of -${tradeResult.total_slippage.toFixed(2)} already baked into Price PnL, yielding a real net profit of <strong>${tradeResult.net_pnl.toFixed(2)}</strong>.
               </div>
             </>
           ) : (
             <>
               <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
               <div>
-                <strong>Negative Realized Yield:</strong> The funding spread of {(tradeResult.spread * 100).toFixed(3)}% was insufficient to absorb the deterministic 0.20% fee drag (-${tradeResult.total_fee.toFixed(2)}) plus slippage, resulting in a net loss of <strong>-${Math.abs(tradeResult.net_pnl).toFixed(2)}</strong>.
+                <strong>Negative Realized Yield:</strong> The funding spread of {(tradeResult.spread * 100).toFixed(3)}% was insufficient to absorb the per-exchange taker fee drag (-${tradeResult.total_fee.toFixed(2)}), with slippage attribution of -${tradeResult.total_slippage.toFixed(2)} already baked into Price PnL, resulting in a net loss of <strong>-${Math.abs(tradeResult.net_pnl).toFixed(2)}</strong>.
               </div>
             </>
           )}

@@ -3,22 +3,22 @@
 
 ## 1. 前置與骨架
 
-- [ ] 1.1 確認 `setup-vitest` 的 `src/engine/arbitrageEngine.test.ts`（`[Q-05]` 鎖住 `net_pnl ≈ −2.400000108`）與 `server/liveScanMath.test.ts`（`[Q-05][P4]`、`[Q-06]`）存在且綠燈（缺少則先補）；建立 `runtime/src/accounting/`（若 `runtime/` 骨架尚不存在則建立最小 tsconfig / vitest include），加入「accounting 模組不得 import Node API / I/O / 時鐘」的自動檢查測試
+- [x] 1.1 確認 `setup-vitest` 的 `src/engine/arbitrageEngine.test.ts`（`[Q-05]` 鎖住 `net_pnl ≈ −2.400000108`）與 `server/liveScanMath.test.ts`（`[Q-05][P4]`、`[Q-06]`）存在且綠燈（缺少則先補）；建立 `runtime/src/accounting/`（若 `runtime/` 骨架尚不存在則建立最小 tsconfig / vitest include），加入「accounting 模組不得 import Node API / I/O / 時鐘」的自動檢查測試
 
 ## 2. Fee Engine
 
-- [ ] 2.1 `feeConfig.ts`：`FeeTierConfig`（含 `source`）、預設費率表（`DEFAULT_ESTIMATE`）、載入驗證（`FEE_RATE_OUT_OF_RANGE`、`FEE_TIER_MISSING`）、`fee_config_version`；`src/types/schema.ts` 改為 re-export
-- [ ] 2.2 `feeEngine.ts`：`estimateFee` / `feeForFill`（MAKER / TAKER / SIMULATED→TAKER）、`FeeRateSource` 實作（供 `paper-execution-engine`）與「策略 / 掃描層不得出現手續費字面值」靜態檢查測試
+- [x] 2.1 `feeConfig.ts`：`FeeTierConfig`（含 `source`）、預設費率表（`DEFAULT_ESTIMATE`）、載入驗證（`FEE_RATE_OUT_OF_RANGE`、`FEE_TIER_MISSING`）、`fee_config_version`；`src/types/schema.ts` 改為 re-export
+- [x] 2.2 `feeEngine.ts`：`estimateFee` / `feeForFill`（MAKER / TAKER / SIMULATED→TAKER）、`FeeRateSource` 實作（供 `paper-execution-engine`）與「策略 / 掃描層不得出現手續費字面值」靜態檢查測試
 
 ## 3. Slippage Engine 與公式原語
 
-- [ ] 3.1 `slippageEngine.ts`：`walkBook`（BUY 250 → 100.006、SELL 100 → 99.985、深度不足 `INSUFFICIENT_DEPTH`）、safety buffer、`TOP_OF_BOOK` 退回（SONY 案例四筆 ≥ 0.4%）、`UNAVAILABLE`
-- [ ] 3.2 `pnlFormula.ts` + `fundingMath.ts`：`slippageAttribution`、`composeNetPnl`（型別不含滑價參數；「滑價不被重複扣除」案例 −1.00 而非 −2.00；參考價 PnL + 歸因 = 實際 PnL 恆等式）、`fundingCashflow`（+1.01、正負號三案例、與 `funding-settlement-rules` 的 +1.00 一致）
+- [x] 3.1 `slippageEngine.ts`：`walkBook`（BUY 250 → 100.006、SELL 100 → 99.985、深度不足 `INSUFFICIENT_DEPTH`）、safety buffer、`TOP_OF_BOOK` 退回（SONY 案例四筆 ≥ 0.4%）、`UNAVAILABLE`
+- [x] 3.2 `pnlFormula.ts` + `fundingMath.ts`：`slippageAttribution`、`composeNetPnl`（型別不含滑價參數；「滑價不被重複扣除」案例 −1.00 而非 −2.00；參考價 PnL + 歸因 = 實際 PnL 恆等式）、`fundingCashflow`（+1.01、正負號三案例、與 `funding-settlement-rules` 的 +1.00 一致）
 
 ## 4. Expected Net PnL 與決策函式
 
-- [ ] 4.1 `expectedNet.ts` `estimateExpectedNet`：數量依 step 捨去、預期 funding（`rate_source = 'PREDICTED'`）、四筆手續費、含 buffer 滑價歸因、entry basis（NONE / ADVERSE_ONLY / FULL）、basis 風險折價、成本拆解與版本欄位（完整拆解 −0.50 案例）
-- [ ] 4.2 `netSpread` / `selectBestPair` / `rankByNet` / 門檻判定（MEW −0.00022、P2 勝 P1、B 排在 A 前）與 `evaluatePredictedRateRisk`（`BELOW_MIN_NET_PNL` −1.10、`SPREAD_FLIPPED`）
+- [x] 4.1 `expectedNet.ts` `estimateExpectedNet`：數量依 step 捨去、預期 funding、四筆手續費、含 buffer 滑價歸因、entry basis（NONE / ADVERSE_ONLY / FULL）、basis 風險折價、成本拆解與版本欄位（完整拆解 −0.50 案例）。註：`rate_source = 'PREDICTED'` 欄位未加入 `ExpectedNetResult`（非型別既有欄位、非 spec Scenario 斷言的硬性輸出）——若下游 `paper-trading-event-loop` 需要此標記請在該 change 補上，見報告「待確認」。
+- [x] 4.2 `netSpread` / `selectBestPair` / `rankByNet` / 門檻判定（`meetsNetThreshold`；MEW −0.00022、P2 勝 P1、B 排在 A 前）與 `evaluatePredictedRateRisk`（`BELOW_MIN_NET_PNL` −1.10、`SPREAD_FLIPPED`）
 
 ## 5. 研究端修正與過渡
 
