@@ -3,21 +3,21 @@
 
 ## 1. 鎖住現行行為與骨架
 
-- [ ] 1.1 特性測試：把 `server.ts` live-scan 的「解析 + 聚合」與 `extractBaseSymbol` 抽成可測函式（行為不變），以錄製的 5 所回應 fixture 鎖住現行輸出；Q-01 / Q-02 / Q-03 / BE-09 的已知錯誤案例（`USDT_BTC_PERP` 覆蓋 BTC、4h×8h 取 min(T)、`SETTLING` 腿、量預設 1,000 萬）以測試名稱標明將被哪個任務修正
-- [ ] 1.2 骨架與埠：確認 / 建立 `runtime/` 骨架（design 跨 change 假設 A1、A2、A5）；新增 `runtime/src/market/instruments/types.ts`、`EventSink`、`PublicRestClient` 與 `BasicRestClient`（非 2xx、逾時、解析錯誤、交易所信封錯誤皆 throw `UpstreamError`，不回空陣列）；加入「`runtime/src/market/instruments/` 不得出現交易所名稱字面值」的自動檢查測試
+- [x] 1.1 特性測試：把 `server.ts` live-scan 的「解析 + 聚合」與 `extractBaseSymbol` 抽成可測函式（行為不變），以錄製的 5 所回應 fixture 鎖住現行輸出；Q-01 / Q-02 / Q-03 / BE-09 的已知錯誤案例（`USDT_BTC_PERP` 覆蓋 BTC、4h×8h 取 min(T)、`SETTLING` 腿、量預設 1,000 萬）以測試名稱標明將被哪個任務修正
+- [x] 1.2 骨架與埠：確認 / 建立 `runtime/` 骨架（design 跨 change 假設 A1、A2、A5）；新增 `runtime/src/market/instruments/types.ts`、`EventSink`、`PublicRestClient` 與 `BasicRestClient`（非 2xx、逾時、解析錯誤、交易所信封錯誤皆 throw `UpstreamError`，不回空陣列）；加入「`runtime/src/market/instruments/` 不得出現交易所名稱字面值」的自動檢查測試
 
 ## 2. 正規化與 adapter
 
-- [ ] 2.1 `canonical.ts`：`instrument_key`、倍數優先序（OVERRIDE → METADATA → PREFIX → NONE）、前綴白名單（`1INCH` 不誤判）、`qty_unit_in_base`；先寫 spec 中 6 個 Scenario 的失敗測試
-- [ ] 2.2 Binance adapter（`exchangeInfo` + `fundingInfo` + `premiumIndex`）：身分、類型（`TRADIFI_PERPETUAL`）、狀態（`SETTLING` → `DELISTING`、未知 → `UNKNOWN`）、`PRICE_FILTER` / `LOT_SIZE` / `MIN_NOTIONAL`、週期（未列出 = 8，`EXCHANGE_DOC_DEFAULT`）、`nextFundingTime = 0` → `MISSING`
-- [ ] 2.3 Bybit adapter（`instruments-info` 分頁 + tickers）：`symbolType = 'stock'` → TradFi、`Delivering` → `DELISTING`、`fundingInterval` 分鐘換算小時、`lotSizeFilter` / `priceFilter`
-- [ ] 2.4 OKX（`ctVal`/`ctMult`、週期 = `nextFundingTime − fundingTime`）、Bitget（tick = `priceEndStep × 10^−pricePlace`、`sizeMultiplier` 步進、`current-fund-rate` 時程）、Pionex（`quoteCurrency ≠ USDT` → `INVERSE_PERPETUAL`、週期 `UNKNOWN`）三個掃描用 adapter，含信封錯誤處理
+- [x] 2.1 `canonical.ts`：`instrument_key`、倍數優先序（OVERRIDE → METADATA → PREFIX → NONE）、前綴白名單（`1INCH` 不誤判）、`qty_unit_in_base`；先寫 spec 中 6 個 Scenario 的失敗測試
+- [x] 2.2 Binance adapter（`exchangeInfo` + `fundingInfo` + `premiumIndex`）：身分、類型（`TRADIFI_PERPETUAL`）、狀態（`SETTLING` → `DELISTING`、未知 → `UNKNOWN`）、`PRICE_FILTER` / `LOT_SIZE` / `MIN_NOTIONAL`、週期（未列出 = 8，`EXCHANGE_DOC_DEFAULT`）、`nextFundingTime = 0` → `MISSING`
+- [x] 2.3 Bybit adapter（`instruments-info` 分頁 + tickers）：`symbolType = 'stock'` → TradFi、`Delivering` → `DELISTING`、`fundingInterval` 分鐘換算小時、`lotSizeFilter` / `priceFilter`
+- [x] 2.4 OKX（`ctVal`/`ctMult`、週期 = `nextFundingTime − fundingTime`）、Bitget（tick = `priceEndStep × 10^−pricePlace`、`sizeMultiplier` 步進、`current-fund-rate` 時程）、Pionex（`quoteCurrency ≠ USDT` → `INVERSE_PERPETUAL`、週期 `UNKNOWN`）三個掃描用 adapter，含信封錯誤處理
 
 ## 3. 註冊表核心
 
-- [ ] 3.1 `registry.ts`：`applySnapshot` diff（新增 / 變更 / `ABSENT_FROM_SOURCE` → `DELISTED`）、`created_at` / `updated_at` / `status_changed_at` / `last_seen_at` 規則、歧義標記、逐所來源狀態與失敗隔離（保留上次成功資料）、`version` / `onChange` / `subscribableSymbols`，每次轉換經 `EventSink` 送出對應事件
-- [ ] 3.2 資金費時程：`STALE`（不以 +週期外推）/ `MISSING`、`updateFundingSchedule`（亂序忽略、未登錄拒絕、週期變動產生 `FUNDING_SCHEDULE_CHANGED`）
-- [ ] 3.3 `matching.ts` 的 `matchPair` / `candidatePairs`（8 項檢查依序、否決原因、成功結果欄位對齊規格書 §5）與 `orderSpec.ts`（`roundQtyDown`、`roundPrice`、`checkOrderMinimums`、`toBaseQty`，十進位取整）
+- [x] 3.1 `registry.ts`：`applySnapshot` diff（新增 / 變更 / `ABSENT_FROM_SOURCE` → `DELISTED`）、`created_at` / `updated_at` / `status_changed_at` / `last_seen_at` 規則、歧義標記、逐所來源狀態與失敗隔離（保留上次成功資料）、`version` / `onChange` / `subscribableSymbols`，每次轉換經 `EventSink` 送出對應事件
+- [x] 3.2 資金費時程：`STALE`（不以 +週期外推）/ `MISSING`、`updateFundingSchedule`（亂序忽略、未登錄拒絕、週期變動產生 `FUNDING_SCHEDULE_CHANGED`）
+- [x] 3.3 `matching.ts` 的 `matchPair` / `candidatePairs`（8 項檢查依序、否決原因、成功結果欄位對齊規格書 §5）與 `orderSpec.ts`（`roundQtyDown`、`roundPrice`、`checkOrderMinimums`、`toBaseQty`，十進位取整）
 
 ## 4. 研究端過渡
 
