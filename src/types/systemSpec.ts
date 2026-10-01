@@ -45,9 +45,32 @@ export interface OrderLatencyMetrics {
  * Order State Machine (M5 & M6)
  * Explicit distinction between Pending Order Cancel vs Position Close
  */
+/**
+ * @deprecated v0.1 5-state order enum (spec §2.1, C-11). Replaced by
+ * `OrderState` in `runtime/src/types/status.ts` (v0.2, 9 states, no
+ * `CLOSED`). Migration order (design.md Decision 7, trading-schema-types):
+ * step 1 of 6 (migrate first). Display adapter: `toLegacyOrderState` in
+ * `src/types/legacy/adapters.ts`.
+ */
 export type OrderState = 'NEW' | 'PARTIALLY_FILLED' | 'FILLED' | 'CANCELED' | 'REJECTED';
+/**
+ * @deprecated v0.1 position state (spec §2.1, C-11). Replaced by
+ * `Trade.status` (`TradeStatus`) in `runtime/src/types/status.ts` (v0.2).
+ * Migration order (design.md Decision 7, trading-schema-types): step 3 of 6
+ * (after `OrderState`, `SimulatedOrderLeg`; before `TimelineMilestone`,
+ * `ArbitrageTradeResult`, `FunnelCandidate`). Display adapter:
+ * `toLegacyPositionState` in `src/types/legacy/adapters.ts`.
+ */
 export type PositionState = 'FLAT' | 'OPENING' | 'BALANCED_HEDGED' | 'LEG_IMBALANCE' | 'CLOSING' | 'EMERGENCY_EXIT';
 
+/**
+ * @deprecated v0.1 single-order-per-leg shape (spec §2.1, C-11). Replaced
+ * by `PaperOrder` + `Fill` (one order can have many fills) in
+ * `runtime/src/types/order.ts` / `fill.ts` (v0.2). Migration order
+ * (design.md Decision 7, trading-schema-types): step 2 of 6 (after
+ * `OrderState`; before `PositionState`, `TimelineMilestone`,
+ * `ArbitrageTradeResult`, `FunnelCandidate`).
+ */
 export interface SimulatedOrderLeg {
   exchange: 'Pionex' | 'Binance' | 'Bybit' | 'Bitget' | 'OKX';
   client_order_id: string;
@@ -72,6 +95,13 @@ export interface SimulatedOrderLeg {
  */
 export type CoverageTier = 'universal_5' | 'popular_4' | 'mainstream_3' | 'pair_2';
 
+/**
+ * @deprecated v0.1 5-exchange flattened candidate shape (spec §2.1, C-11).
+ * Replaced by `Opportunity` in `runtime/src/types/opportunity.ts` (v0.2;
+ * `long_exchange`/`short_exchange` pair instead of flattened per-exchange
+ * fields). Migration order (design.md Decision 7, trading-schema-types):
+ * step 6 of 6 (last — depends on Instrument Registry and Runtime scanner).
+ */
 export interface FunnelCandidate {
   rank: number;
   symbol: string;
@@ -108,27 +138,22 @@ export interface FunnelCandidate {
 
 /**
  * 9-Factor Pre-Flight Risk Checklist (M6)
+ *
+ * Moved to `runtime/src/types/risk.ts` (spec §6 "沿用"; design.md
+ * Decision 3) — re-exported here, shape unchanged, so the research UI
+ * keeps compiling without importing from `runtime/` directly.
  */
-export interface RiskCheckItem {
-  id: string;
-  name: string;
-  category: 'Connection' | 'Execution' | 'Market' | 'Capital';
-  status: 'PASS' | 'WARN' | 'FAIL';
-  value: string;
-  threshold: string;
-  details: string;
-}
-
-export interface RiskStatusReport {
-  overall_status: 'PASS' | 'ABORT' | 'EMERGENCY_EXIT';
-  checks: RiskCheckItem[];
-  failed_reasons: string[];
-  leg_imbalance_detected: boolean;
-  action_recommendation: 'PROCEED_TRADE' | 'ABORT_PRE_FLIGHT' | 'EMERGENCY_CLOSE_FILLED_LEG';
-}
+export type { RiskCheckItem, RiskStatusReport } from '../../runtime/src/types/risk';
 
 /**
  * Execution Timeline Milestone Event
+ *
+ * @deprecated v0.1 relative-T timeline shape (spec §2.1, C-11). Replaced by
+ * deriving the timeline from `TradingEvent`'s absolute timestamps
+ * (`runtime/src/types/event.ts`; tech spec §27, spec §24). Migration order
+ * (design.md Decision 7, trading-schema-types): step 4 of 6 (after
+ * `OrderState`, `SimulatedOrderLeg`, `PositionState`; before
+ * `ArbitrageTradeResult`, `FunnelCandidate`).
  */
 export interface TimelineMilestone {
   id: string;

@@ -228,6 +228,12 @@ export function validateEntity(kind: EntityKind, value: unknown): string[] {
   if (value === null || typeof value !== 'object') {
     return ['INVALID_VALUE'];
   }
-  VALIDATORS[kind](value as AnyRecord, errors);
+  const rec = value as AnyRecord;
+  // Spec §2.1 rule 5: a record imported with timestamp_source = 'UNKNOWN'
+  // (src/types/legacy/historicalImport.ts) must never be written as PAPER.
+  if (rec.timestamp_source === 'UNKNOWN' && rec.mode === 'PAPER') {
+    errors.push('UNKNOWN_TIMESTAMP_NOT_ALLOWED');
+  }
+  VALIDATORS[kind](rec, errors);
   return errors;
 }

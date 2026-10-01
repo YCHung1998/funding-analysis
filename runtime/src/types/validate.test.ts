@@ -228,6 +228,38 @@ describe('validateEntity: TradeResult funding finalization', () => {
   });
 });
 
+describe('validateEntity: unknown-timestamp records refused as PAPER (spec §2.1 rule 5)', () => {
+  it('timestamp_source UNKNOWN + mode PAPER -> UNKNOWN_TIMESTAMP_NOT_ALLOWED', () => {
+    const errs = validateEntity('Trade', {
+      trade_id: 't1',
+      opportunity_id: 'o1',
+      strategy_id: 's1',
+      strategy_version: 'v1',
+      config_version: 'c1',
+      symbol: 'BTCUSDT',
+      mode: 'PAPER',
+      timestamp_source: 'UNKNOWN',
+      created_at: 1_700_000_000_000,
+      updated_at: 1_700_000_000_000,
+      status: 'CREATED',
+      target_notional_per_leg_usdt: 1000,
+      leverage: 5,
+      allocated_margin_usdt: 200,
+      allocated_capital_usdt: 250,
+      legs: [],
+      expected_pnl_usdt: 1,
+      risk_status: {
+        overall_status: 'PASS',
+        checks: [],
+        failed_reasons: [],
+        leg_imbalance_detected: false,
+        action_recommendation: 'PROCEED_TRADE',
+      },
+    });
+    expect(errs).toContain('UNKNOWN_TIMESTAMP_NOT_ALLOWED');
+  });
+});
+
 describe('validateEntity: AccountSnapshot ledger identity', () => {
   const base = {
     snapshot_id: 's1',
