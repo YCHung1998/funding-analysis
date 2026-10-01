@@ -108,7 +108,7 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 | P10 | 兩套型別並存：`schema.ts` 以 Pionex×Binance 為中心（`pionex_rate`/`binance_rate`），`systemSpec.ts` 以 5 所欄位平鋪；交易所清單在 ≥6 處重複定義 | `types/`、`server.ts`、`liveMarketService.ts` | #4 |
 | P11 | ✅ 可結案（實測 `instId=ANY` 回 717 筆）。OKX 用 `funding-rate?instId=ANY` 批次取費率，實測 OKX 有 467 筆有費率，但此參數行為**未查證官方文件** | `server.ts:98` | #1 |
 | P12 | Local Secret Vault 以明文存 `localStorage` | `LocalSecretsView.tsx:71` | 安全 |
-| P13 | ✅ 已解（`feature-setup-vitest`，change `setup-vitest`）：vitest 5 + 特性測試基準，`npm run check` 為本機合併門檻。原描述：無測試框架、無任何測試 | — | 全部 |
+| P13 | ✅ 已解（`d9813a4`，change `setup-vitest`）：vitest 5 + 特性測試基準，`npm run check` 為本機合併門檻。原描述：無測試框架、無任何測試 | — | 全部 |
 | P14 | AI Studio 遺留：`package.json` name=`react-example`、未使用的 `@google/genai`、`GEMINI_API_KEY`、`metadata.json` | 根目錄 | #5 |
 | P15 | `npm install` 需 `--legacy-peer-deps`（devDependency `esbuild@^0.25` 與 vite 8 衝突） | `package.json` | #5 |
 
