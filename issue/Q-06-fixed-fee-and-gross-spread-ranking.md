@@ -45,6 +45,6 @@ matchedCandidates.sort((a, b) => b.spread - a.spread);  // server.ts:337：排�
 - 參考：Bybit Bitsgap 文章同時指出實際費率依帳戶等級而定（「at the base, non-VIP tier」）。
 
 ## 驗收條件
-- [ ] 單元測試：Bybit×Bitget、spread 0.208%、滑價 0 → `expected_net_pnl_pct < 0` 且 `meets_threshold === false`。
-- [ ] 單元測試：best_pair 依 `net` 而非毛 spread 選擇（構造毛 spread 最大但手續費最高的組合）。
-- [ ] ExecutionSimulator：Pionex 為 short 時，Pionex 腿的 `entry_fee` 使用 short 端設定的費率。
+- [x] 單元測試：Bybit×Bitget、spread 0.208%、滑價 0 → `expected_net_pnl_pct < 0` 且 `meets_threshold === false`。（2026-10-01 `net-cost-model`：`expectedNet.test.ts`「毛 spread 通過但淨值為負（Q-06 MEW）」）
+- [x] 單元測試：best_pair 依 `net` 而非毛 spread 選擇（構造毛 spread 最大但手續費最高的組合）。（`expectedNet.test.ts`、`server/liveScanRegistry.test.ts`）
+- [x] ExecutionSimulator：Pionex 為 short 時，Pionex 腿的 `entry_fee` 使用 short 端設定的費率。（`arbitrageEngine.test.ts` `resolveLegFeeRates`）

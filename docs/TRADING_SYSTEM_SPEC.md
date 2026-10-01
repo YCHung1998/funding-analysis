@@ -218,7 +218,7 @@ interface Opportunity {
     short_price: number;
     price_difference_pct: number;
 
-    estimated_fee_pct: number;
+    estimated_fee_pct: number;       // = expected_fees_usdt / 單腿目標名目（runtime/src/accounting/expectedNet.ts）
     estimated_slippage_pct: number;
     estimated_funding_pnl: number;
     estimated_net_pnl: number;
@@ -613,6 +613,14 @@ Paper Engine 必須支援：Fixed、Percentage、Orderbook、Depth-Based、Rando
 
 📎 取代 `server.ts:295` 依成交量三級常數的滑價（HANDOFF P4、Q-05）。
 
+**已實作（2026-10-01，`net-cost-model`，`runtime/src/accounting/slippageEngine.ts`）**——估計來源依序：
+
+1. `ORDERBOOK`：逐檔吃單（walk-the-book）求平均成交價。
+2. `TOP_OF_BOOK`：只有最佳買賣價時以半價差估計。
+3. `UNAVAILABLE`：沒有盤口 → Runtime 判為不合格（不得以預設值代替）。
+
+`slippage_safety_buffer_pct` 加在估計值上；**待定**（佔位 0，建議 1 bp，Paper 期間校準）。研究端即時掃描尚無盤口，暫以 `LEGACY_VOLUME_TIER`（量能三級）作為明確標示的過渡來源，待 `websocket-data-layer` 提供盤口後移除。
+
 ---
 
 ## 18. Funding Settlement
@@ -718,6 +726,18 @@ Price PnL = 以參考價計算的 Price PnL + slippage_attribution_usdt
 - 以不同樣式（例如灰色 / 括號 / 斜體）顯示，並標註 **「已含在 Price PnL 中，不另外扣除」**
 - 損益瀑布圖中 Slippage 為 Price PnL 的**子項**，不是與 Price PnL 並列的獨立扣項
 - 在 `?` 說明中解釋：`Net = Funding + Price − Fees`；自行加總時不要再減 Slippage
+
+### 20.2 預期淨利與實際淨利同一結構（✅ `net-cost-model`）
+
+```text
+expected_net = expected_funding + expected_price − expected_fees − basis_risk_charge
+expected_price = expected_basis_pnl + expected_slippage_attribution
+```
+
+- 實作：`runtime/src/accounting/expectedNet.ts` `estimateExpectedNet`；實際淨利用同一個 `composeNetPnl`（型別上沒有 slippage 參數，避免重複扣除）。
+- `expected_basis_pnl`：兩所進場價差（`entry_basis_pct`）的保守估計，預設只計不利的一側（`ADVERSE_ONLY`）。
+- `basis_risk_charge = basis_risk_z × basis_sigma_pct × 名目`；`basis_sigma_pct` **待定**（佔位 0，需歷史資料 B7 校準）。
+- 研究端 live-scan 的百分比欄位（`fee_drag_pct`、`est_slippage_pct`、`expected_net_pnl_pct`）一律以**單腿目標名目**為分母，`spread − fee − slippage + 不利價差 = 淨值`（測試把關）。
 
 ---
 

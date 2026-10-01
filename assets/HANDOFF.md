@@ -99,12 +99,12 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 | P1 | ✅ 已解（`instrument-registry`）：配對改為兩腿下次結算時間差 ≤ 60s 才成立，週期取各所回傳值。原描述：不同結算週期（1h/4h/8h）的費率直接相減；Binance/Bitget/OKX 週期寫死 8 | `runtime/src/market/instruments/matching.ts` | #1 |
 | P2 | ✅ 已解（`instrument-registry`）：`matchPair` 逐腿比對結算時間，不再取 min。原描述：兩腿結算時間未檢查是否一致，取 `min(nextFundingTime)` 當 T | `runtime/src/market/instruments/matching.ts` | #1 #3 |
 | P3 | ✅ 已解（`instrument-registry`）：每腿各自的 24h 量，缺值直接淘汰。原描述：24h 量只取 Binance；缺值填 `10,000,000`（實測 PUFFERUSDT 命中）→ 冷門幣看起來有量 | `server/liveScanRegistry.ts` | #1 |
-| P4 | 即時滑價 = 依量分三級常數，未用盤口深度 / K 棒波動 | `server/liveScanMath.ts` `computeLiveScanNetPnl` | #2 |
+| P4 | 🟡 Runtime 已解（`net-cost-model` `slippageEngine`：盤口 → 最佳買賣價 → 不合格）；研究端 live-scan 仍以 `LEGACY_VOLUME_TIER` 明確標示過渡，待 `websocket-data-layer` 提供盤口。原描述：即時滑價 = 依量分三級常數，未用盤口深度 / K 棒波動 | `server/liveScanMath.ts` `computeLiveScanNetPnl` | #2 |
 | P5 | ~~各所費率欄位語意未對齊~~ **已推翻**：兩者皆為預測值，實際風險見 Q-04。原描述：Binance 用 `lastFundingRate`、Pionex 用 `nextFundingRate`（當期 vs 預測，**需查官方文件確認**） | `server.ts:183,198` | #1 |
 | P6 | ✅ 已解（`instrument-registry`）：以 `instrument_key` + 價格倍數配對，反向合約不再併入線性合約（舊函式與 `[Q-xx] 現況` 測試保留為歷史紀錄，server 已不呼叫）。原描述：`extractBaseSymbol` 去掉 `1000` 前綴但沒換算倍數；且 `replace('USDT','')` 只替換第一次出現 | `runtime/src/market/instruments/canonical.ts` | #1 #3 |
 | P7 | 🟡 Runtime 端已解（`risk-engine-kill-switch` 第 1–3 組）：`runtime/src/risk/` 28 項檢查皆由注入輸入計算、輸入缺失一律 FAIL（`coverage.test.ts` 強制每項有 FAIL 測試）；研究原型 `dryRunEngine.ts` 凍結不回改，UI 仍標示。原描述：Dry-run 數值寫死：延遲依交易所名稱三元式、價格漂移固定 ±0.008%、保證金 `$5,000`、風控 r5/r7/r9 永遠 PASS；唯一失敗情境是單腿 429 | `dryRunEngine.ts` | #3 |
 | P8 | 部分成交、API timeout、重試、費率在 T 前翻轉，皆未模擬 | `dryRunEngine.ts` | #3 |
-| P9 | 手續費固定 taker 0.05%，無各所 / maker / VIP 設定 | 多處 | #3 |
+| P9 | ✅ 已解（`net-cost-model`）：Fee Engine 依交易所 / maker-taker 取費率（`DEFAULT_FEE_TABLE` 數值待查證）；`dryRunEngine` 改讀 Fee Engine。原描述：手續費固定 taker 0.05%，無各所 / maker / VIP 設定 | 多處 | #3 |
 | P10 | 兩套型別並存：`schema.ts` 以 Pionex×Binance 為中心（`pionex_rate`/`binance_rate`），`systemSpec.ts` 以 5 所欄位平鋪；交易所清單在 ≥6 處重複定義 | `types/`、`server.ts`、`liveMarketService.ts` | #4 |
 | P11 | ✅ 可結案（實測 `instId=ANY` 回 717 筆）。OKX 用 `funding-rate?instId=ANY` 批次取費率，實測 OKX 有 467 筆有費率，但此參數行為**未查證官方文件** | `server.ts:98` | #1 |
 | P12 | Local Secret Vault 以明文存 `localStorage` | `LocalSecretsView.tsx:71` | 安全 |
@@ -154,7 +154,7 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 | B6 | server 改走 `adapters/` 並統一型別：`Record<ExchangeId, …>` 取代平鋪欄位，交易所註冊表集中一處 | P10 | L（建議拆 2 個 change） |
 | B7 | 歷史結算窗口：抓真實「結算時刻 ±2m」1m K 棒（非最近 5 根），供需求 #2 | #2 | M |
 | B8 | Dry-run 情境引擎：可設定 seed 的隨機延遲、部分成交、timeout/重試、費率翻轉、滑價分布；輸出多次模擬的損益分布 | P7 P8 | L |
-| B9 | 手續費設定化（每所 maker/taker/VIP） | P9 | S |
+| B9 | ✅ 完成（`net-cost-model`）：手續費設定化（每所 maker/taker/VIP） | P9 | S |
 | B10 | 新手模式：首頁「一條龍」流程（選幣 → 看風險 → 看邊界 → dry-run），隱藏進階分頁 | #5 | M |
 | B11 | Secret Vault 改為不持久化或加密；在真正需要下單前可考慮直接移除 | P12 | S |
 | B12 | 舊型別遷移 1/6：`OrderState`（v0.1）→ `PaperOrder.order_state`，改 import `runtime/src/types` | P10 | S |
@@ -182,6 +182,14 @@ B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run che
 - **下一步建議**：<1–3 項，指向 Backlog ID>
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
+
+### 2026-10-01（5）— Claude (Opus 5.5) 整合 + 1 個 Sonnet agent（net-cost-model）
+- **做了什麼**：分支 `integration/net-cost-model`：新增 `runtime/src/accounting/`（feeConfig、feeEngine、slippageEngine、pnlFormula、fundingMath、expectedNet）。修正 Q-05（研究引擎滑價重複扣除：`net_pnl` −2.40 → −1.20）、Q-06（固定 0.20% 手續費 → 費率表；live-scan 以淨值排序與判門檻，跨所價差納入預期 PnL）、P9（dryRunEngine 手續費依交易所，Bybit 腿 0.5 → 0.55 USDT / 1000U）。資金費金額共用 `funding/settlementInference.ts`，未分叉公式。
+- **review 發現並修正**：live-scan 的 `fee_drag_pct`、`est_slippage_pct` 以兩腿名目為分母、淨值以單腿名目為分母，畫面數字對不起來且手續費 / 滑價看起來只有一半（同時讓 dry-run 的模擬滑價減半）；已統一為單腿名目並加「各項加總 = 淨值」測試。
+- **驗證證據**：`npm run check` 全綠（92 檔 / 934 測試）；`openspec validate --all --strict` 15/15；`[Q-05]`、`[Q-06]` 特性測試先改期望值紅燈後修正；所有成本函式對 NaN / Infinity / undefined 皆拋錯。live-scan 實測（integrator）：715 組配對、無非有限值、依淨值排序、各項加總與淨值誤差 ≤ 0.0001 USDT；過門檻 6 → 0，主因為新納入的不利跨所價差（例：KSTRUSDT 做多所比做空所貴 0.25%）。
+- **待定（非框架）**：`slippage_safety_buffer_pct`、`basis_sigma_pct`、`DEFAULT_FEE_TABLE` 官方查證、`research_min_net_pnl_usdt`（技術書 §38 net-cost-model 段）。
+- **沒做完 / 已知問題**：未 archive（`ExpectedNetConfig` 尚未接入持久化設定）；live-scan 仍用 `LEGACY_VOLUME_TIER` 滑價（待 websocket-data-layer）；Q-04（預測費率誤差折扣）與結算窗口價差擴大需歷史資料 B7。
+- **下一步建議**：下一輪 `trading-event-store`、`websocket-data-layer`（可並行）→ `position-funding-pnl` → `paper-execution-engine` → `runtime-health-reconciliation`。`paper-execution-engine` 必須直接使用 `slippageEngine.walkBook`（或通過同一組 250 單位 / 100.006 情境）。
 
 ### 2026-10-01（4）— Claude (Opus 5.5) 整合 + 2 個 Sonnet agent（第 1b 波）
 - **做了什麼**：整合分支 `integration/wave-1b`：

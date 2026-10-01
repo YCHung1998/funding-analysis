@@ -491,7 +491,7 @@ Fee 必須根據 Exchange、Account Tier、Maker/Taker、Notional 計算。
 
 **不要在 Strategy 裡寫死 `0.05%`**；Strategy 只能取得 `estimated_fee`。
 
-📎 取代 HANDOFF P9、Q-06；費率設定沿用 `schema.ts` `FeeTierConfig`。
+📎 取代 HANDOFF P9、Q-06。已實作（`net-cost-model`）：`runtime/src/accounting/feeConfig.ts`（`DEFAULT_FEE_TABLE`、`fee_config_version`）與 `feeEngine.ts`（`estimateFee`、`feeForFill`、`FeeRateSource`）。`DEFAULT_FEE_TABLE` **待定**：目前為第三方整理的 VIP 0 費率（`source: 'DEFAULT_ESTIMATE'`），尚未對照各所官方頁面或以唯讀帳戶端點查證。
 
 ---
 
@@ -507,6 +507,8 @@ Fee 必須根據 Exchange、Account Tier、Maker/Taker、Notional 計算。
 輸入：Exchange, Symbol, Side, Quantity, Orderbook
 輸出：Expected Average Fill, Expected Slippage
 ```
+
+📎 第一版已實作（`net-cost-model`）：`runtime/src/accounting/slippageEngine.ts` 的 `walkBook`（逐檔吃單）、`topOfBook`（半價差）、`withBuffer`（安全緩衝）；退回順序見規格書 §17。`paper-execution-engine` 的模擬撮合必須直接使用 `walkBook`，或通過同一組 250 單位 / 平均價 100.006 的情境測試，避免兩套滑價結果不一致。
 
 ---
 
@@ -821,6 +823,16 @@ interface PaperTradingConfig {
     max_holding_time_ms: number;             // 預設 600000
     entry_risk_interval_ms: number;          // 預設 250
     position_risk_interval_ms: number;       // 預設 1000
+
+    // net-cost-model（規格書 §17、§20.2；目前為 ExpectedNetConfig，尚未接入持久化設定）
+    fee_table: FeeTierConfig[];              // 待定：DEFAULT_FEE_TABLE 未經官方查證
+    slippage_safety_buffer_pct: number;      // 待定：佔位 0，建議 0.0001
+    liquidity_assumption: 'TAKER' | 'MAKER'; // 預設 TAKER
+    basis_convergence_assumption: 'ADVERSE_ONLY' | 'FULL';  // 預設 ADVERSE_ONLY
+    basis_risk_z: number;                    // 預設 1
+    basis_sigma_pct: number;                 // 待定：佔位 0，需歷史資料校準
+    minimum_net_spread_pct: number;          // 取代 minimum_funding_spread_pct（以淨值判門檻）
+    research_min_net_pnl_usdt: number;       // 待定：研究端 live-scan 過門檻淨利，佔位 0；是否與 minimum_expected_net_pnl_usdt 一致
     emergency_exit_timeout_ms: number;
     minimum_funding_spread_pct: number;
     minimum_expected_net_pnl_usdt: number;
