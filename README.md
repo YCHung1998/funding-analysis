@@ -173,17 +173,17 @@ npm run check          # 本機 CI：lint → build → test，任一步失敗�
 4. **滑價估計在即時掃描中是依成交量分三級的常數**（0.015% / 0.03% / 0.05% 每腿），沒有看盤口深度。
 5. **`1000PEPE` 類合約**會被正規化成 `PEPE`，但價格/數量倍數沒有換算，對沖數量會錯。
 6. **手續費一律假設 taker 0.05%**，未依各所實際費率 / VIP 等級。
-7. **沒有任何自動化測試。**
+7. **自動化測試目前只是「特性測試」**：鎖住現有輸出（含上述 bug，測試名稱標 `[Q-xx] 現況`），不代表結果正確；UI 元件尚無測試。
 
 ## 6. 核心公式
 
 | 項目 | 公式 | 位置 |
 |------|------|------|
-| Spread | `abs(rate_A − rate_B)`（小數，0.0025 = 0.25%） | `server.ts`、`funnelScanner.ts` |
+| Spread | `abs(rate_A − rate_B)`（小數，0.0025 = 0.25%） | `server/liveScanMath.ts`（`findBestPair`）、`funnelScanner.ts` |
 | 方向 | 低費率所做多、高費率所做空 | 同上 |
 | 資金費損益 | 多方 `−N × rate_long`；空方 `+N × rate_short` | `arbitrageEngine.ts`、`dryRunEngine.ts` |
 | 手續費拖累 | `2 × (taker_A + taker_B)`，預設 = 0.20% | `SensitivityMatrix.tsx` |
-| 預期淨利 | `spread − fee_drag − 4 × slip_per_leg` | `server.ts:298` |
+| 預期淨利 | `spread − fee_drag − 4 × slip_per_leg` | `server/liveScanMath.ts`（`computeLiveScanNetPnl`） |
 | 滑價模型（研究用） | `½ × bid-ask% + vol% × 0.12 × clamp(shock×0.5, 0.8, 2.5)`，下限 1bp | `arbitrageEngine.ts:51` |
 | 量能衝擊 | `T 棒量 / avg(T-2m, T-1m 量)` | `arbitrageEngine.ts` |
 
@@ -191,6 +191,7 @@ npm run check          # 本機 CI：lint → build → test，任一步失敗�
 
 ```
 server.ts                      Express：/api/market/live-scan、/api/latency/ping、/api/market/live-klines
+server/liveScanMath.ts         live-scan 純計算（符號正規化、最佳配對、結算時間、預期淨利），無副作用可測試
 src/
   types/schema.ts              Common Schema（CommonFundingRecord、SettlementWindowBar、交易結果）
   types/systemSpec.ts          M1–M7 系統型別（FunnelCandidate、訂單狀態機、風控、Secrets）
@@ -202,12 +203,24 @@ src/
   data/mockMarketData.ts       mock 結算事件
   spec/arbitrageSpecV01.ts     App 內 Spec 頁的內容（設計原則）
   components/                  各分頁 UI
+**/*.test.ts                   測試放在被測模組旁（src/engine、src/adapters、server/）
+test/                          跨模組的測試基礎設施測試
+vitest.config.ts / vitest.setup.ts  測試設定（node 環境、禁止網路）
+docs/                          Paper Trading 規格書（What）與開發技術書（How）
+openspec/changes/              進行中的 OpenSpec change（proposal / design / specs / tasks）
+openspec/specs/                已歸檔、生效中的能力規格（例如 test-infrastructure）
 assets/HANDOFF.md              交接規範 & 目前狀態 & backlog
 assets/ARCHITECTURE.md         架構圖（Mermaid + 元件索引，agent 優先讀這份）
 assets/architecture.html       互動式架構圖（瀏覽器打開）
 assets/architecture.json       架構圖原始定義（含元件 → 原始碼路徑）
 issue/                         Review 問題清單（Q 量化 / BE 後端 / FE 前端），先讀 issue/README.md
 ```
+
+### 開發流程（給開發者）
+
+1. **需求先走 OpenSpec**：`/opsx:propose <change>` 產生 proposal / design / specs / tasks → 確認後 `/opsx:apply` 實作 → 完成並驗證後 `/opsx:archive` 歸檔。開工順序見技術書 §50.1（C-09）。
+2. **分支**：`main`（穩定）← `develop`（整合）← `feature-<change-name>`（每個 change 一條，建議各開一個 git worktree）。
+3. **合併門檻**：`npm run check` 全綠；改公式附「改前失敗、改後通過」證據；以 `git merge --no-ff` 合回 `develop`（詳見 `assets/HANDOFF.md` §5）。
 
 ## 8. 設計原則（不可違反）
 
