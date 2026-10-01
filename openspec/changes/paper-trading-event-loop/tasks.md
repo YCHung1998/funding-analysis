@@ -25,8 +25,8 @@
 
 ## 5. 結單與入帳（funding-settlement-rules）
 
-- [ ] 5.1 進場截止 / `hedged_by` 未對沖轉 LEG_IMBALANCE / 鎖定區間禁止減倉 / `exit_at` 不等確認即觸發平倉的守門邏輯（以 Execution 介面的假實作驗證）
-- [ ] 5.2 `FundingSettlement` 推定：EXPECTED → ELIGIBLE → SETTLED / NOT_ELIGIBLE / MISSED、現金流正負號、公布延遲記錄、mark price 來源標記，以及 TradeResult `funding_confirmed` / `finalized_at` 定案規則
+- [x] 5.1 進場截止 / `hedged_by` 未對沖轉 LEG_IMBALANCE / 鎖定區間禁止減倉 / `exit_at` 不等確認即觸發平倉的守門邏輯（以 Execution 介面的假實作驗證）
+- [x] 5.2 `FundingSettlement` 推定：EXPECTED → ELIGIBLE → SETTLED / NOT_ELIGIBLE / MISSED、現金流正負號、公布延遲記錄、mark price 來源標記，以及 TradeResult `funding_confirmed` / `finalized_at` 定案規則（`EXPECTED` 由呼叫端於 ARM 建立，本模組處理 ARM 之後的推定，見報告）
 
 ## 6. 收尾
 
