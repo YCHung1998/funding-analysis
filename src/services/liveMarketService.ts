@@ -42,6 +42,15 @@ export interface LiveMarketCandidate {
   expected_net_pnl_pct: number;
   expected_net_pnl_usdt: number;
   meets_threshold: boolean;
+  // instrument-registry 新增欄位（向下相容，選用）
+  instrument_key?: string;
+  long_funding_time?: number;
+  short_funding_time?: number;
+  long_funding_interval_hours?: number | null;
+  short_funding_interval_hours?: number | null;
+  funding_aligned?: boolean;
+  long_volume_24h?: number;
+  short_volume_24h?: number;
 }
 
 export interface LiveScanResponse {
@@ -59,6 +68,8 @@ export interface LiveScanResponse {
     OKX: number;
   };
   candidates: LiveMarketCandidate[];
+  // instrument-registry 新增欄位：每所註冊表來源狀態（選用）
+  registry_sources?: Record<string, { status: 'OK' | 'FAILED'; error_kind?: string; http_status?: number }>;
 }
 
 export async function fetchLiveMarketScan(): Promise<LiveScanResponse> {

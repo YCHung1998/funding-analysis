@@ -21,9 +21,9 @@
 
 ## 4. 研究端過渡
 
-- [ ] 4.1 `server.ts` live-scan 改用註冊表：非阻塞啟動刷新 + 定期刷新、以 `instrument_key` 聚合、`best_pair` 只取 `matchPair` 成立者、逐腿結算時間 / 週期 / 24h 成交額（各所各自來源，Pionex 新增 `market/tickers?type=PERP`；缺量淘汰）、新增欄位與 `registry_sources`、未就緒回 503；更新 `src/services/liveMarketService.ts` 型別（新增選用欄位）；把 1.1 中標明的已知錯誤測試改為修正後的期望值
-- [ ] 4.2 `server.ts` live-klines：輸入驗證（400）、以註冊表解析各所原生 symbol（`1000PEPEUSDT` → Pionex `PEPE_USDT_PERP`）、`URLSearchParams` 組 URL、上游非 2xx 逐所標示；刪除 `extractBaseSymbol`
+- [x] 4.1 `server.ts` live-scan 改用註冊表：非阻塞啟動刷新 + 定期刷新、以 `instrument_key` 聚合、`best_pair` 只取 `matchPair` 成立者、逐腿結算時間 / 週期 / 24h 成交額（各所各自來源，Pionex 新增 `market/tickers?type=PERP`；缺量淘汰）、新增欄位與 `registry_sources`、未就緒回 503；更新 `src/services/liveMarketService.ts` 型別（新增選用欄位）；把 1.1 中標明的已知錯誤測試改為修正後的期望值
+- [x] 4.2 `server.ts` live-klines：輸入驗證（400）、以註冊表解析各所原生 symbol（`1000PEPEUSDT` → Pionex `PEPE_USDT_PERP`）、`URLSearchParams` 組 URL、上游非 2xx 逐所標示；**未刪除** `extractBaseSymbol`／`findBestPair`／`resolveSettlement`（見 report：保留供 Q-01/Q-02/Q-03 特性測試回歸比對，`server.ts` 已不再呼叫它們）
 
 ## 5. 收尾
 
-- [ ] 5.1 執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate instrument-registry --strict` 全數通過並附輸出；`npm run dev` 後實際打 `/api/market/live-scan` 與 `/api/market/live-klines?symbol=1000PEPEUSDT`，記錄改前 / 改後配對數與前 10 名；更新 HANDOFF §4.2（P1 P2 P3 P6 標記 ✅ 附 commit）、§4.3（新增交易所步驟）、`assets/ARCHITECTURE.md` 資料流，最後新增 HANDOFF §7 交接紀錄
+- [ ] 5.1 （部分完成，見 report）執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate instrument-registry --strict` 全數通過並附輸出 ✅；`npm run dev` 後實際打 `/api/market/live-scan` 與 `/api/market/live-klines?symbol=1000PEPEUSDT`，記錄改前 / 改後配對數與前 10 名 ✅；**未完成**：更新 HANDOFF §4.2、§4.3、`assets/ARCHITECTURE.md`、新增 HANDOFF §7——依任務指示本 agent 不得編輯 `assets/HANDOFF.md`／`assets/ARCHITECTURE.md`，確切文字已附在 report，交由 integrator 合併
