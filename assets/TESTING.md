@@ -99,6 +99,11 @@ curl -s "localhost:3000/api/market/live-klines?symbol=BTCUSDT" | head -c 400
 | 10 | M1. Common Schema & Adapters | 開啟 | 顯示範例 payload → Common Schema 的欄位對照 |
 | 11 | Local Secret Vault | 只看不填 | **不要輸入真實 API Key**（明文存 localStorage，HANDOFF P12） |
 | 12 | 全部分頁 | 開瀏覽器 DevTools → Console | 無紅色錯誤（網路暫時失敗的 warning 可接受） |
+| 13 | Paper Trading（以 `VITE_PAPER_DATA_SOURCE=mock npm run dev` 啟動） | 開啟分頁 | 頂端 `MOCK DATA` 橫幅、每個區塊標 MOCK；Account / Runtime Health / Current Trades（2 筆，`EMERGENCY_EXIT` 置頂醒目）/ Completed Trades（6 筆）/ Event Stream 循環事件 |
+| 14 | Paper Trading | 點任一筆交易 | 開啟 Trade Detail（6 個區段 + Timeline + PnL waterfall）；狀態代碼旁 `?` 顯示中文名稱與定義 |
+| 15 | Paper Trading | Completed Trades 切換 Result 篩選、點「載入下一頁」 | 列表依篩選更新；費率以 % 顯示（存小數、顯示 ×100） |
+| 16 | Paper Trading | 看 Kill Switch 區 | 按鈕停用並標 `blocked-by C-16` |
+| 17 | Paper Trading（不設環境變數，預設 live） | 開啟分頁 | 後端尚未實作 → 顯示 `RUNTIME_UNREACHABLE`，**不得**出現 mock 資料 |
 
 已知會「看起來怪但屬現況」的項目（不用回報為新 bug）：Dry-run 延遲依交易所名稱寫死（P7）、`1000PEPE` 類合約被併成 `PEPE`（P6）、1h 與 8h 費率直接相減（P1）、Binance/Bitget/OKX 結算週期寫死 8h（Q-02）。
 

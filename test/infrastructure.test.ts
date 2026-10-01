@@ -9,7 +9,7 @@ describe('test infrastructure', () => {
 
   it('test.include 含五個納入樣式（含 runtime 與 React tsx 元件測試）', () => {
     // paper-trading-ui change: added 'src/**/*.test.tsx' so React Testing
-    // Library component tests (jsdom env, see environmentMatchGlobs below)
+    // Library component tests (jsdom env via a per-file `// @vitest-environment jsdom` docblock)
     // are discovered alongside the existing four node-environment patterns.
     expect(config.test?.include).toEqual([
       'src/**/*.test.ts',

@@ -158,8 +158,9 @@ npm run check          # 本機 CI：lint → build → test，任一步失敗�
 | M2 Kline Viewer | 🟡 mock（`src/data/mockMarketData.ts`）＋ 即時 Binance/Pionex 最近 5 根 1m K | 非「結算時刻」的歷史 K 棒 |
 | M4 Arbitrage Scanner | ❌ mock 回測事件 | |
 | M4 Sensitivity Matrix | ✅ 純公式，無資料依賴 | |
-| M5 60s Execution Flow | ❌ mock 事件 → `src/engine/arbitrageEngine.ts` | 公式可信，輸入是假的 |
-| M6/M7 Dry-Run Console | 🟡 候選可來自即時掃描；**延遲、價格漂移、保證金、部分風控項為寫死常數** | 唯一可觸發的失敗情境是「強制單腿失敗（429）」 |
+| M5 60s Execution Flow | ❌ mock 事件 → `src/engine/arbitrageEngine.ts` | 公式可信，輸入是假的；分頁標 `MOCK` |
+| M6/M7 Dry-Run Console | 🟡 候選可來自即時掃描；**延遲、價格漂移、保證金、部分風控項為寫死常數** | 唯一可觸發的失敗情境是「強制單腿失敗（429）」；分頁標 `FROZEN`（凍結，不再加功能） |
+| Paper Trading | 🟡 `VITE_PAPER_DATA_SOURCE=live`（預設）讀取 Paper 唯讀 API 與 `/ws/paper`（**後端尚未實作**）；`=mock` 使用 `src/features/paperTrading/api/mock/fixtures.ts`，頁面頂端與每個區塊標示 MOCK | live 模式連不上時顯示 `RUNTIME_UNREACHABLE`，不會退回 mock；Kill Switch 為停用版位（待 C-16） |
 | M1 Schema Inspector | 範例 payload → adapter 轉換展示 | server 端實際解析**沒有走** adapter |
 | Latency ping | ✅ 即時量測本機 → 5 所的 RTT | |
 
@@ -167,13 +168,13 @@ npm run check          # 本機 CI：lint → build → test，任一步失敗�
 
 以下都已在程式碼中確認，詳細修正方向見 `assets/HANDOFF.md`：
 
-1. **結算週期未正規化**：1h 合約和 8h 合約的費率直接相減比較，會高估/低估 spread；Binance / Bitget / OKX 週期被寫死為 8h。
-2. **兩所結算時間可能不同**：目前取最早的那一所當 T，沒有檢查兩腿是否同時結算。
-3. **成交量只來自 Binance**；Binance 沒上架的幣會被填入預設值 `10,000,000`，看起來像有量。實測排名前幾名常是 24h 量只有數十萬 U 的冷門幣。
+1. ~~結算週期未正規化~~ ✅ 已修正（2026-10-01，`instrument-registry`）：即時掃描只配對兩腿下次結算時間差 ≤ 60 秒的組合，週期取各所回傳值。
+2. ~~兩所結算時間可能不同~~ ✅ 已修正：逐腿比對結算時間，不對齊的組合不會出現。
+3. ~~成交量只來自 Binance、缺值填 1,000 萬~~ ✅ 已修正：每腿使用自己交易所的 24h 量，缺值直接淘汰。（最低流動性門檻仍待決，HANDOFF §8）
 4. **滑價估計在即時掃描中是依成交量分三級的常數**（0.015% / 0.03% / 0.05% 每腿），沒有看盤口深度。
-5. **`1000PEPE` 類合約**會被正規化成 `PEPE`，但價格/數量倍數沒有換算，對沖數量會錯。
+5. ~~`1000PEPE` 類合約倍數未換算~~ ✅ 已修正：以 Instrument Registry 的統一 ID 與價格倍數配對，反向合約不再併入線性合約。
 6. **手續費一律假設 taker 0.05%**，未依各所實際費率 / VIP 等級。
-7. **自動化測試目前只是「特性測試」**：鎖住現有輸出（含上述 bug，測試名稱標 `[Q-xx] 現況`），不代表結果正確；UI 元件尚無測試。
+7. **研究原型的自動化測試是「特性測試」**：鎖住現有輸出（含已知 bug，測試名稱標 `[Q-xx] 現況`），不代表結果正確。新的 Paper Trading Runtime（`runtime/`）與 Paper UI 則是依規格先寫測試再實作。
 
 ## 6. 核心公式
 

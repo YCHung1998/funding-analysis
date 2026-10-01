@@ -102,7 +102,7 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 | P4 | 即時滑價 = 依量分三級常數，未用盤口深度 / K 棒波動 | `server/liveScanMath.ts` `computeLiveScanNetPnl` | #2 |
 | P5 | ~~各所費率欄位語意未對齊~~ **已推翻**：兩者皆為預測值，實際風險見 Q-04。原描述：Binance 用 `lastFundingRate`、Pionex 用 `nextFundingRate`（當期 vs 預測，**需查官方文件確認**） | `server.ts:183,198` | #1 |
 | P6 | ✅ 已解（`instrument-registry`）：以 `instrument_key` + 價格倍數配對，反向合約不再併入線性合約（舊函式與 `[Q-xx] 現況` 測試保留為歷史紀錄，server 已不呼叫）。原描述：`extractBaseSymbol` 去掉 `1000` 前綴但沒換算倍數；且 `replace('USDT','')` 只替換第一次出現 | `runtime/src/market/instruments/canonical.ts` | #1 #3 |
-| P7 | Dry-run 數值寫死：延遲依交易所名稱三元式、價格漂移固定 ±0.008%、保證金 `$5,000`、風控 r5/r7/r9 永遠 PASS；唯一失敗情境是單腿 429 | `dryRunEngine.ts` | #3 |
+| P7 | 🟡 Runtime 端已解（`risk-engine-kill-switch` 第 1–3 組）：`runtime/src/risk/` 28 項檢查皆由注入輸入計算、輸入缺失一律 FAIL（`coverage.test.ts` 強制每項有 FAIL 測試）；研究原型 `dryRunEngine.ts` 凍結不回改，UI 仍標示。原描述：Dry-run 數值寫死：延遲依交易所名稱三元式、價格漂移固定 ±0.008%、保證金 `$5,000`、風控 r5/r7/r9 永遠 PASS；唯一失敗情境是單腿 429 | `dryRunEngine.ts` | #3 |
 | P8 | 部分成交、API timeout、重試、費率在 T 前翻轉，皆未模擬 | `dryRunEngine.ts` | #3 |
 | P9 | 手續費固定 taker 0.05%，無各所 / maker / VIP 設定 | 多處 | #3 |
 | P10 | 兩套型別並存：`schema.ts` 以 Pionex×Binance 為中心（`pionex_rate`/`binance_rate`），`systemSpec.ts` 以 5 所欄位平鋪；交易所清單在 ≥6 處重複定義 | `types/`、`server.ts`、`liveMarketService.ts` | #4 |
@@ -163,6 +163,9 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 | B15 | 舊型別遷移 4/6：`TimelineMilestone` → 由 `TradingEvent` 絕對時間戳推導 | P10 | M |
 | B16 | 舊型別遷移 5/6：`ArbitrageTradeResult` → `TradeResult` | P10 | M |
 | B17 | 舊型別遷移 6/6（最後，依賴 Runtime scanner）：`FunnelCandidate` → `Opportunity` | P10 | L |
+| B19 | 術語表補條目：`SESSION`（WATCH…SKIPPED，規格書 §26.4）、`HEALTH`（Runtime Health 狀態，待 `runtime-health-reconciliation`）、風控 `reason_code` 中英對照；目前 UI 對這些代碼顯示「術語表缺少此代碼」 | — | S |
+| B20 | Paper UI 發現的上游型別缺口：`AccountSnapshot` 無 `max_positions`（UI 顯示 —）、`FundingSettlement` 無 `interval_hours`、`PaperOrder` 無每腿 USDT 滑價歸因；由 `position-funding-pnl` / `trading-event-store` 決定是否補欄位 | P10 | S |
+| B21 | 風控持續檢查的排程（`entry_risk_interval_ms` / `position_risk_interval_ms`）尚未接上主迴圈：`EntryRiskMonitor` / `PositionRiskMonitor` 的 `start` / `continue` / `end` 由 `paper-execution-engine` 呼叫 | — | S |
 | B18 | event-loop 剩餘本地型別改用 `TradingEvent`：`SessionPhaseChangedEvent`、`OpportunityEvent`（及 `PositionSide`、`TradeHedgeState`、`SessionPhase` 的歸屬），見 `runtime/src` 內 `TODO(trading-schema-types)` | — | S |
 
 B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run check` 全綠（C-11 規則 1）。
@@ -179,6 +182,15 @@ B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run che
 - **下一步建議**：<1–3 項，指向 Backlog ID>
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
+
+### 2026-10-01（4）— Claude (Opus 5.5) 整合 + 2 個 Sonnet agent（第 1b 波）
+- **做了什麼**：整合分支 `integration/wave-1b`：
+  - `risk-engine-kill-switch` 第 1–3 組：`runtime/src/risk/`（28 項 Pre-Trade / Entry / Position 檢查、`RiskStatusReport` / `risk_checks` / 事件輸出、ARM 與 PRE_FLIGHT 閘門、Entry / Position 監控）；依賴以注入介面 + 假資料測試。review 發現**輸入為 NaN / Infinity / 空陣列時風控放行（fail-open）**，已修正為一律 FAIL（集中輸入驗證 + 逐欄位自動產生的缺漏測試）。第 4 組 Kill Switch blocked-by C-16。
+  - `paper-trading-ui`：新增「Paper Trading」分頁（`src/features/paperTrading/`，獨立 chunk）；後端（Paper 唯讀 API、Health、`/ws/paper`）尚未存在，以 `VITE_PAPER_DATA_SOURCE=mock` 開發，頁面與各區塊標示 MOCK；Kill Switch 為停用版位（C-16）。測試加入 jsdom + React Testing Library（`*.test.tsx` 以檔頭 `// @vitest-environment jsdom` 宣告）。
+- **驗證證據**：`npm run check` 全綠（83 檔 / 870 測試）；`openspec validate --all --strict` 15/15；risk 修正前紅燈 Pre-Trade 17/43、Entry 10/31、Position 17/35，integrator 以獨立探測（NaN / undefined / Infinity / null 共 86 例）重驗全過；UI 抽查費率 ×100 只在顯示層、live 失敗不退回 mock、所有 `.tsx` 測試皆宣告 jsdom。
+- **沒做完 / 已知問題**：risk 第 4 組（C-16）；UI 真實串接（tasks 4.1，待 Paper API / runtime-health）；B19–B21。兩個 change 都未 archive（仍有未完成 tasks）。
+- **手動查看**：`VITE_PAPER_DATA_SOURCE=mock npm run dev` → 點「Paper Trading」分頁（見 `assets/TESTING.md` §4）。
+- **需要使用者決定的事**：C-16、C-19；風控門檻預設值（技術書 §38 risk-engine 段，目前為起算值）。
 
 ### 2026-10-01（3）— Claude (Opus 5.5)
 - **做了什麼**：C-05 回寫規格書 / 技術書並 archive `paper-trading-event-loop`；依使用者決議處理第一波待決事項：

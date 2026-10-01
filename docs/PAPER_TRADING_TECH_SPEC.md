@@ -807,6 +807,20 @@ interface PaperTradingConfig {
     clock_calibration_interval_ms: number;   // 預設 60_000
     clock_jump_threshold_ms: number;         // 預設 100
     clock_max_error_ms: number;              // 預設 500
+
+    // risk-engine（規格書 §22.1）：以下預設值為起算值，非使用者決議值，Paper 期間校準
+    depth_coverage_ratio: number;            // 預設 3（盤口可成交量 ≥ 目標名目 × 3）
+    max_api_latency_ms: number;              // 預設 500（超過 → FAIL）
+    warn_api_latency_ms: number;             // 預設 200（超過 → WARN）
+    max_exchange_notional_usdt: number;      // 預設 3000（單一交易所總曝險）
+    max_entry_price_deviation_pct: number;   // 預設 0.003
+    max_entry_volatility_pct: number;        // 預設 0.005
+    volatility_window_ms: number;            // 預設 5000
+    max_leg_margin_loss_ratio: number;       // 預設 0.5
+    max_basis_divergence_pct: number;        // 預設 0.005
+    max_holding_time_ms: number;             // 預設 600000
+    entry_risk_interval_ms: number;          // 預設 250
+    position_risk_interval_ms: number;       // 預設 1000
     emergency_exit_timeout_ms: number;
     minimum_funding_spread_pct: number;
     minimum_expected_net_pnl_usdt: number;
