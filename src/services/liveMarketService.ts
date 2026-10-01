@@ -51,6 +51,17 @@ export interface LiveMarketCandidate {
   funding_aligned?: boolean;
   long_volume_24h?: number;
   short_volume_24h?: number;
+  // net-cost-model 新增欄位（向下相容，選用）：best_pair / 排序 / meets_threshold 已改為淨值口徑
+  // （`spread` 保留為毛 spread，`expected_net_pnl_pct`/`expected_net_pnl_usdt` 等 @deprecated
+  // 欄位語意不變但數值已是淨值）。
+  net_spread_pct?: number;
+  pair_net_spreads?: Record<string, number>;
+  entry_basis_pct?: number;
+  slippage_model?: { long: string; short: string };
+  fee_config_version?: string;
+  // [Integrator review fix] single-leg notional that est_slippage_pct / fee_drag_pct /
+  // expected_net_pnl_pct are all consistently denominated by (spec §5 mapping).
+  target_notional_per_leg_usdt?: number;
 }
 
 export interface LiveScanResponse {

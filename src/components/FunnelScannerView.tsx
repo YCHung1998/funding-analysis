@@ -19,6 +19,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { runFunnelScan } from '../engine/funnelScanner';
 import { FunnelCandidate, CoverageTier } from '../types/systemSpec';
+import { pairNetSpreadFor } from './funnelScannerNetSpread';
 import {
   fetchLiveMarketScan,
   fetchLiveLatency,
@@ -104,7 +105,8 @@ export const FunnelScannerView: React.FC<FunnelScannerViewProps> = ({
   const [lastScanError, setLastScanError] = useState<string | null>(null);
 
   // Sorting State
-  const [sortField, setSortField] = useState<SortField>('spread');
+  // net-cost-model spec「以淨 spread 選對、排序與判門檻」：預設排序改為淨值（毛 spread 仍可手動切換）。
+  const [sortField, setSortField] = useState<SortField>('expected_net_pnl_pct');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   // Multi-Exchange Filters (5 Exchanges)
@@ -196,7 +198,11 @@ export const FunnelScannerView: React.FC<FunnelScannerViewProps> = ({
           const pairSpread = Math.abs(rate1 - rate2);
           const longEx = rate1 < rate2 ? ex1 : ex2;
           const shortEx = rate1 < rate2 ? ex2 : ex1;
-          const expNetPct = pairSpread - item.fee_drag_pct - item.est_slippage_pct;
+          // net-cost-model: 使用伺服器算好的淨值（net_spread_pct），不再以 spread - fee_drag_pct -
+          // est_slippage_pct 自行重算；若伺服器未提供此配對的淨值則排除（不得以毛 spread 頂替）。
+          const serverNetSpreadPct = pairNetSpreadFor(item, ex1, ex2);
+          if (serverNetSpreadPct === undefined) return null;
+          const expNetPct = serverNetSpreadPct;
 
           return {
             ...item,
@@ -223,7 +229,12 @@ export const FunnelScannerView: React.FC<FunnelScannerViewProps> = ({
         const tradeableExchanges = enabledExList.filter(ex => (item as any)[`${ex.toLowerCase()}_rate`] !== null);
         if (tradeableExchanges.length < 2) return null;
 
+        // net-cost-model spec「以淨 spread 選對、排序與判門檻」：best pair among the currently
+        // enabled exchanges is picked by the server's net_spread_pct (via pair_net_spreads), not
+        // by re-deriving it from the gross spread here. `maxSpread` is still tracked purely for
+        // the (display-only) `spread` field.
         let maxSpread = 0;
+        let bestNetSpreadPct = -Infinity;
         let bestLong: ExchangeName = tradeableExchanges[0];
         let bestShort: ExchangeName = tradeableExchanges[1];
 
@@ -233,9 +244,11 @@ export const FunnelScannerView: React.FC<FunnelScannerViewProps> = ({
             const e2 = tradeableExchanges[j];
             const r1 = (item as any)[`${e1.toLowerCase()}_rate`];
             const r2 = (item as any)[`${e2.toLowerCase()}_rate`];
-            const s = Math.abs(r1 - r2);
-            if (s > maxSpread) {
-              maxSpread = s;
+            const netSpreadPct = pairNetSpreadFor(item, e1, e2);
+            if (netSpreadPct === undefined) continue;
+            if (netSpreadPct > bestNetSpreadPct) {
+              bestNetSpreadPct = netSpreadPct;
+              maxSpread = Math.abs(r1 - r2);
               if (r1 < r2) {
                 bestLong = e1;
                 bestShort = e2;
@@ -247,7 +260,9 @@ export const FunnelScannerView: React.FC<FunnelScannerViewProps> = ({
           }
         }
 
-        const expNetPct = maxSpread - item.fee_drag_pct - item.est_slippage_pct;
+        if (bestNetSpreadPct === -Infinity) return null; // no server-computed net value for any enabled combo
+
+        const expNetPct = bestNetSpreadPct;
         const longRate = (item as any)[`${bestLong.toLowerCase()}_rate`];
         const shortRate = (item as any)[`${bestShort.toLowerCase()}_rate`];
 
