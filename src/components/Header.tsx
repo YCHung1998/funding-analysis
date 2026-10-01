@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Lock,
   Play,
+  PlayCircle,
   HelpCircle
 } from 'lucide-react';
 
@@ -27,7 +28,8 @@ export type ActiveTab =
   | 'sensitivity'
   | 'schema'
   | 'secrets'
-  | 'spec';
+  | 'spec'
+  | 'paper';
 
 interface HeaderProps {
   activeTab: ActiveTab;
@@ -48,8 +50,15 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'funnel' as ActiveTab, label: 'M3. Multi-Ex Funnel Scanner', icon: Filter, highlight: true },
     { id: 'scanner' as ActiveTab, label: 'M4. Arbitrage Scanner', icon: ArrowRightLeft },
     { id: 'sensitivity' as ActiveTab, label: 'M4. Sensitivity Matrix', icon: Sliders },
-    { id: 'simulator' as ActiveTab, label: 'M5. 60s Execution Flow', icon: Activity },
-    { id: 'dryrun' as ActiveTab, label: 'M6/M7. Dry-Run & Risk Console', icon: Play, highlight: true },
+    { id: 'simulator' as ActiveTab, label: 'M5. 60s Execution Flow', icon: Activity, badge: 'MOCK' as const },
+    {
+      id: 'dryrun' as ActiveTab,
+      label: 'M6/M7. Dry-Run & Risk Console',
+      icon: Play,
+      highlight: true,
+      badge: 'FROZEN' as const,
+    },
+    { id: 'paper' as ActiveTab, label: 'Paper Trading', icon: PlayCircle, highlight: true },
     { id: 'secrets' as ActiveTab, label: 'Local Secret Vault', icon: Lock },
     { id: 'spec' as ActiveTab, label: 'System Spec v0.1', icon: BookOpen },
   ];
@@ -120,6 +129,17 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
                 <span>{tab.label}</span>
+                {'badge' in tab && tab.badge && (
+                  <span
+                    className={`rounded border px-1 py-0.5 font-mono text-[9px] font-semibold ${
+                      tab.badge === 'FROZEN'
+                        ? 'border-sky-700/60 bg-sky-950/60 text-sky-400'
+                        : 'border-amber-600/60 bg-amber-950/60 text-amber-400'
+                    }`}
+                  >
+                    {tab.badge}
+                  </span>
+                )}
                 {tab.highlight && !isActive && (
                   <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
                 )}
