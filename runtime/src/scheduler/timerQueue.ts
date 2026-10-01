@@ -28,15 +28,23 @@ export class TimerQueue {
     if (entry) entry.cb = null;
   }
 
-  /** Fire every non-cancelled callback due at or before `target`, in (dueAt, seq) order; remove them from the queue. */
+  /**
+   * Fire every non-cancelled callback due at or before `target`, in (dueAt, seq) order, then
+   * remove them from the queue. Entries stay in `this.entries` until after they fire so that a
+   * callback can cancel a later-but-already-due entry in the same batch (the "SKIPPED" /
+   * cancel-remaining-transitions use case in SettlementSession).
+   */
   fireDueBy(target: number): void {
     const due = this.entries
       .filter((e) => e.dueAt <= target)
       .sort((a, b) => a.dueAt - b.dueAt || a.seq - b.seq);
-    this.entries = this.entries.filter((e) => e.dueAt > target);
     for (const entry of due) {
-      entry.cb?.();
+      const cb = entry.cb;
+      if (!cb) continue;
+      entry.cb = null; // consumed: prevents double-fire and makes a later cancel() a no-op
+      cb();
     }
+    this.entries = this.entries.filter((e) => e.dueAt > target);
   }
 
   get pendingCount(): number {

@@ -16,8 +16,8 @@
 
 - [x] 3.1 交易所結算規則表（Binance 15/15 s、Bybit 5/5 s、OKX 0/60 s 預留）與 `pair_guard` 計算，經 adapter 介面提供（策略層無交易所分支）
 - [x] 3.2 階段時間表計算與設定檔驗證（Binance × Bybit → T-25s / T-15s / T+15s / T+30s；OKX 腿 → T+75s；衝突設定啟動失敗）
-- [ ] 3.3 `SettlementSession` 狀態機：由時鐘驅動 `WATCH → … → DONE / SKIPPED`，每次轉換產生 `SESSION_PHASE_CHANGED` 事件；全域與單場次持倉上限
-- [ ] 3.4 合約資格判斷：trading_exchanges、結算時間對齊、週期 ≥ 2h，於 SHORTLIST 與 ARM 重新評估（含週期臨時轉為 1h 的案例）
+- [x] 3.3 `SettlementSession` 狀態機：由時鐘驅動 `WATCH → … → DONE / SKIPPED`，每次轉換產生 `SESSION_PHASE_CHANGED` 事件；全域與單場次持倉上限（`DONE` 由外部於資金費入帳定案後呼叫 `markDone()`，見報告）
+- [x] 3.4 合約資格判斷：trading_exchanges、結算時間對齊、週期 ≥ 2h，於 SHORTLIST 與 ARM 重新評估（含週期臨時轉為 1h 的案例）
 
 ## 4. 機會失效（opportunity-lifecycle）
 
