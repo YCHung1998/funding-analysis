@@ -8,6 +8,15 @@
  *
  * `evaluatePreFlight` reruns only the 6 ★ checks (design.md §14 table /
  * `PRE_FLIGHT_RERUN_CODES`) for the Order Submission re-check.
+ *
+ * Every numeric input goes through `isFiniteNumber` (not a raw
+ * `=== undefined` check) — `undefined`/`null`/`NaN`/`±Infinity` must all be
+ * treated as INPUT_MISSING, never silently compared (integrator review
+ * fail-open bug: `NaN > threshold` is `false`, so an un-validated NaN input
+ * could PASS a check instead of FAILing). If `ctx.now` itself is invalid,
+ * every item in the evaluation is INPUT_MISSING (see `evaluatePreTrade` /
+ * `evaluatePreFlight`) rather than only the two checks that read it
+ * directly, so a bad clock reading can never be silently absorbed.
  */
 import { LEGS, PRE_FLIGHT_RERUN_CODES } from './types';
 import type {
@@ -19,6 +28,7 @@ import type {
   RiskEvaluation,
 } from './types';
 import { failResult, inputMissing, passResult, warnResult } from './types';
+import { isFiniteNumber, isFiniteNumberArray, isPresent } from './validation';
 import { PRE_TRADE_CHECKS, findCheck } from './checks/registry';
 
 function legLabel(leg: Leg): string {
@@ -27,7 +37,7 @@ function legLabel(leg: Leg): string {
 
 function capital(def: CheckDefinition, ctx: PreTradeContext): RiskCheckResult {
   const { required_capital_usdt, available_capital_usdt } = ctx;
-  if (required_capital_usdt === undefined || available_capital_usdt === undefined) return inputMissing(def);
+  if (!isFiniteNumber(required_capital_usdt) || !isFiniteNumber(available_capital_usdt)) return inputMissing(def);
   const value = `${required_capital_usdt} / ${available_capital_usdt}`;
   if (required_capital_usdt > available_capital_usdt) {
     return failResult(def, value, 'required <= available', 'INSUFFICIENT_CAPITAL');
@@ -37,28 +47,27 @@ function capital(def: CheckDefinition, ctx: PreTradeContext): RiskCheckResult {
 
 function maxPositions(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskConfig): RiskCheckResult {
   const { non_terminal_trade_count, non_terminal_trade_count_in_session } = ctx;
-  if (non_terminal_trade_count === undefined) return inputMissing(def);
+  if (!isFiniteNumber(non_terminal_trade_count)) return inputMissing(def);
   if (non_terminal_trade_count >= cfg.max_positions) {
     return failResult(def, String(non_terminal_trade_count), `< ${cfg.max_positions}`, 'MAX_POSITIONS');
   }
-  if (
-    cfg.max_positions_per_session !== undefined &&
-    non_terminal_trade_count_in_session !== undefined &&
-    non_terminal_trade_count_in_session >= cfg.max_positions_per_session
-  ) {
-    return failResult(
-      def,
-      String(non_terminal_trade_count_in_session),
-      `< ${cfg.max_positions_per_session}`,
-      'MAX_POSITIONS',
-    );
+  if (cfg.max_positions_per_session !== undefined) {
+    if (!isFiniteNumber(non_terminal_trade_count_in_session)) return inputMissing(def);
+    if (non_terminal_trade_count_in_session >= cfg.max_positions_per_session) {
+      return failResult(
+        def,
+        String(non_terminal_trade_count_in_session),
+        `< ${cfg.max_positions_per_session}`,
+        'MAX_POSITIONS',
+      );
+    }
   }
   return passResult(def, String(non_terminal_trade_count), `< ${cfg.max_positions}`);
 }
 
 function maxNotionalPerLeg(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskConfig): RiskCheckResult {
   const { target_notional_per_leg_usdt } = ctx;
-  if (target_notional_per_leg_usdt === undefined) return inputMissing(def);
+  if (!isFiniteNumber(target_notional_per_leg_usdt)) return inputMissing(def);
   if (target_notional_per_leg_usdt > cfg.max_notional_per_leg_usdt) {
     return failResult(
       def,
@@ -72,13 +81,16 @@ function maxNotionalPerLeg(def: CheckDefinition, ctx: PreTradeContext, cfg: Risk
 
 function maxLeverage(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskConfig): RiskCheckResult {
   const { leverage, leg_max_leverage } = ctx;
-  if (leverage === undefined) return inputMissing(def);
+  if (!isFiniteNumber(leverage)) return inputMissing(def);
   if (leverage > cfg.max_leverage) {
     return failResult(def, String(leverage), `<= ${cfg.max_leverage}`, 'MAX_LEVERAGE_EXCEEDED');
   }
+  // Per-instrument max leverage is part of this check's FAIL condition (spec table), not optional.
+  if (!isPresent(leg_max_leverage)) return inputMissing(def);
   for (const leg of LEGS) {
-    const legMax = leg_max_leverage?.[leg];
-    if (legMax !== undefined && leverage > legMax) {
+    const legMax = leg_max_leverage[leg];
+    if (!isFiniteNumber(legMax)) return inputMissing(def);
+    if (leverage > legMax) {
       return failResult(def, `${legLabel(leg)}: ${leverage}`, `<= ${legMax}`, 'MAX_LEVERAGE_EXCEEDED');
     }
   }
@@ -87,7 +99,7 @@ function maxLeverage(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskConfig
 
 function minFundingSpread(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskConfig): RiskCheckResult {
   const { long_funding_rate, short_funding_rate } = ctx;
-  if (long_funding_rate === undefined || short_funding_rate === undefined) return inputMissing(def);
+  if (!isFiniteNumber(long_funding_rate) || !isFiniteNumber(short_funding_rate)) return inputMissing(def);
   const spread = short_funding_rate - long_funding_rate;
   if (spread < cfg.minimum_funding_spread_pct) {
     return failResult(def, String(spread), `>= ${cfg.minimum_funding_spread_pct}`, 'BELOW_MIN_SPREAD');
@@ -97,7 +109,7 @@ function minFundingSpread(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskC
 
 function expectedNetPnl(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskConfig): RiskCheckResult {
   const { estimated_net_pnl_usdt } = ctx;
-  if (estimated_net_pnl_usdt === undefined) return inputMissing(def);
+  if (!isFiniteNumber(estimated_net_pnl_usdt)) return inputMissing(def);
   if (estimated_net_pnl_usdt < cfg.minimum_expected_net_pnl_usdt) {
     return failResult(
       def,
@@ -112,8 +124,7 @@ function expectedNetPnl(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskCon
 function maxSlippage(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskConfig): RiskCheckResult {
   const { leg_estimated_slippage_pct } = ctx;
   for (const leg of LEGS) {
-    const v = leg_estimated_slippage_pct?.[leg];
-    if (v === undefined) return inputMissing(def);
+    if (!isFiniteNumber(leg_estimated_slippage_pct?.[leg])) return inputMissing(def);
   }
   for (const leg of LEGS) {
     const v = leg_estimated_slippage_pct![leg]!;
@@ -126,11 +137,10 @@ function maxSlippage(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskConfig
 
 function orderbookDepth(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskConfig): RiskCheckResult {
   const { leg_depth_usdt, target_notional_per_leg_usdt } = ctx;
-  if (target_notional_per_leg_usdt === undefined) return inputMissing(def);
+  if (!isFiniteNumber(target_notional_per_leg_usdt)) return inputMissing(def);
   const required = target_notional_per_leg_usdt * cfg.depth_coverage_ratio;
   for (const leg of LEGS) {
-    const v = leg_depth_usdt?.[leg];
-    if (v === undefined) return inputMissing(def);
+    if (!isFiniteNumber(leg_depth_usdt?.[leg])) return inputMissing(def);
   }
   for (const leg of LEGS) {
     const v = leg_depth_usdt![leg]!;
@@ -145,14 +155,14 @@ function exchangeConnectivity(def: CheckDefinition, ctx: PreTradeContext): RiskC
   const { leg_connectivity, leg_instrument_status } = ctx;
   for (const leg of LEGS) {
     const conn = leg_connectivity?.[leg];
-    if (conn === undefined) return inputMissing(def);
+    if (!isPresent(conn)) return inputMissing(def);
     if (conn !== 'CONNECTED') {
       return failResult(def, `${legLabel(leg)}: ${conn}`, 'CONNECTED', 'EXCHANGE_DISCONNECTED');
     }
   }
   for (const leg of LEGS) {
     const status = leg_instrument_status?.[leg];
-    if (status === undefined) return inputMissing(def);
+    if (!isPresent(status)) return inputMissing(def);
     if (status !== 'TRADING') {
       return failResult(def, `${legLabel(leg)}: ${status}`, 'TRADING', 'INSTRUMENT_NOT_TRADING');
     }
@@ -165,7 +175,7 @@ function apiLatency(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskConfig)
   const medians: PartialRecord = {};
   for (const leg of LEGS) {
     const samples = leg_api_latency_samples_ms?.[leg];
-    if (!samples || samples.length === 0) return inputMissing(def);
+    if (!isFiniteNumberArray(samples)) return inputMissing(def);
     medians[leg] = median(samples);
   }
   for (const leg of LEGS) {
@@ -193,7 +203,8 @@ function median(values: number[]): number {
 
 function fundingTimeAlignment(def: CheckDefinition, ctx: PreTradeContext): RiskCheckResult {
   const { funding_time_eligible, now, entry_deadline } = ctx;
-  if (funding_time_eligible === undefined) return inputMissing(def);
+  if (!isFiniteNumber(now)) return inputMissing(def);
+  if (!isPresent(funding_time_eligible)) return inputMissing(def);
   if (!funding_time_eligible) {
     return failResult(
       def,
@@ -202,7 +213,7 @@ function fundingTimeAlignment(def: CheckDefinition, ctx: PreTradeContext): RiskC
       ctx.funding_time_fail_reason ?? 'FUNDING_NOT_ALIGNED',
     );
   }
-  if (entry_deadline === undefined) return inputMissing(def);
+  if (!isFiniteNumber(entry_deadline)) return inputMissing(def);
   if (now >= entry_deadline) {
     return failResult(def, `now=${now}`, `< entry_deadline(${entry_deadline})`, 'ENTRY_WINDOW_CLOSED');
   }
@@ -211,14 +222,14 @@ function fundingTimeAlignment(def: CheckDefinition, ctx: PreTradeContext): RiskC
 
 function existingExposure(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskConfig): RiskCheckResult {
   const { same_symbol_existing_exposure, leg_exchange_existing_notional_usdt, target_notional_per_leg_usdt } = ctx;
-  if (same_symbol_existing_exposure === undefined) return inputMissing(def);
+  if (!isPresent(same_symbol_existing_exposure)) return inputMissing(def);
   if (same_symbol_existing_exposure) {
     return failResult(def, 'true', 'false', 'EXISTING_EXPOSURE');
   }
-  if (target_notional_per_leg_usdt === undefined) return inputMissing(def);
+  if (!isFiniteNumber(target_notional_per_leg_usdt)) return inputMissing(def);
   for (const leg of LEGS) {
     const existing = leg_exchange_existing_notional_usdt?.[leg];
-    if (existing === undefined) return inputMissing(def);
+    if (!isFiniteNumber(existing)) return inputMissing(def);
     const total = existing + target_notional_per_leg_usdt;
     if (total > cfg.max_exchange_notional_usdt) {
       return failResult(
@@ -236,6 +247,7 @@ function dataFreshness(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskConf
   const { data_age_samples } = ctx;
   if (!data_age_samples || data_age_samples.length === 0) return inputMissing(def);
   for (const sample of data_age_samples) {
+    if (!isFiniteNumber(sample.ageMs)) return inputMissing(def);
     if (sample.ageMs > cfg.data_stale_threshold_ms) {
       return failResult(
         def,
@@ -250,9 +262,12 @@ function dataFreshness(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskConf
 
 function clockReliability(def: CheckDefinition, ctx: PreTradeContext, cfg: RiskConfig): RiskCheckResult {
   const { leg_clock_offset, now } = ctx;
+  if (!isFiniteNumber(now)) return inputMissing(def);
   for (const leg of LEGS) {
     const offset = leg_clock_offset?.[leg];
-    if (offset === undefined) return inputMissing(def);
+    if (!isPresent(offset) || !isFiniteNumber(offset.errorMs) || !isFiniteNumber(offset.calibratedAt)) {
+      return inputMissing(def);
+    }
     if (offset.errorMs > cfg.clock_max_error_ms) {
       return failResult(
         def,
@@ -315,16 +330,23 @@ function aggregate(stage: 'PRE_TRADE', items: RiskCheckResult[], now: number, cf
   };
 }
 
+/** Runs `checks` against `ctx`/`cfg`; if `ctx.now` is invalid, every item is INPUT_MISSING (a bad clock reading must never be silently absorbed by checks that happen not to read it on this branch). */
+function evaluateChecks(checks: readonly CheckDefinition[], ctx: PreTradeContext, cfg: RiskConfig): RiskCheckResult[] {
+  if (!isFiniteNumber(ctx.now)) {
+    return checks.map((def) => inputMissing(def));
+  }
+  return checks.map((def) => CHECK_FNS[def.check_code](ctx, cfg));
+}
+
 /** Runs all 15 Pre-Trade checks, in registry order. */
 export function evaluatePreTrade(ctx: PreTradeContext, cfg: RiskConfig): RiskEvaluation {
-  const items = PRE_TRADE_CHECKS.map((def) => CHECK_FNS[def.check_code](ctx, cfg));
+  const items = evaluateChecks(PRE_TRADE_CHECKS, ctx, cfg);
   return aggregate('PRE_TRADE', items, ctx.now, cfg);
 }
 
 /** Reruns only the 6 ★ checks for the `PRE_FLIGHT` (Order Submission) gate. */
 export function evaluatePreFlight(ctx: PreTradeContext, cfg: RiskConfig): RiskEvaluation {
-  const items = PRE_TRADE_CHECKS.filter((def) =>
-    (PRE_FLIGHT_RERUN_CODES as readonly string[]).includes(def.check_code),
-  ).map((def) => CHECK_FNS[def.check_code](ctx, cfg));
+  const rerun = PRE_TRADE_CHECKS.filter((def) => (PRE_FLIGHT_RERUN_CODES as readonly string[]).includes(def.check_code));
+  const items = evaluateChecks(rerun, ctx, cfg);
   return aggregate('PRE_TRADE', items, ctx.now, cfg);
 }

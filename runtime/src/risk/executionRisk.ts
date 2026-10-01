@@ -6,10 +6,17 @@
  * Pure function; the Trade/Order state transition semantics stay in
  * `paper-execution` — this module only judges and recommends an action
  * (spec "Risk Engine MUST NOT 自行改變 Trade / Order 狀態").
+ *
+ * Every numeric input goes through `isFiniteNumber` (not a raw
+ * `=== undefined` check) so `undefined`/`NaN`/`±Infinity` are all
+ * INPUT_MISSING, never silently compared (integrator review fail-open bug
+ * — see `preTradeRisk.ts`'s header for the full rationale). If `ctx.now` is
+ * invalid, every item is INPUT_MISSING.
  */
 import { LEGS } from './types';
 import type { EntryContext, Leg, RiskCheckResult, RiskConfig, RiskEvaluation } from './types';
 import { failResult, inputMissing, passResult, warnResult } from './types';
+import { isFiniteNumber, isPresent } from './validation';
 import { ENTRY_CHECKS, findCheck } from './checks/registry';
 
 function legLabel(leg: Leg): string {
@@ -20,9 +27,9 @@ function priceDeviation(ctx: EntryContext, cfg: RiskConfig): RiskCheckResult {
   const def = findCheck('PRICE_DEVIATION');
   const { leg_mid_price, leg_target_entry_price } = ctx;
   for (const leg of LEGS) {
-    const mid = leg_mid_price?.[leg];
-    const target = leg_target_entry_price?.[leg];
-    if (mid === undefined || target === undefined) return inputMissing(def);
+    if (!isFiniteNumber(leg_mid_price?.[leg]) || !isFiniteNumber(leg_target_entry_price?.[leg])) {
+      return inputMissing(def);
+    }
   }
   for (const leg of LEGS) {
     const mid = leg_mid_price![leg]!;
@@ -43,7 +50,7 @@ function priceDeviation(ctx: EntryContext, cfg: RiskConfig): RiskCheckResult {
 function fundingRateChange(ctx: EntryContext, cfg: RiskConfig): RiskCheckResult {
   const def = findCheck('FUNDING_RATE_CHANGE');
   const { arm_funding_spread, current_funding_spread } = ctx;
-  if (arm_funding_spread === undefined || current_funding_spread === undefined) return inputMissing(def);
+  if (!isFiniteNumber(arm_funding_spread) || !isFiniteNumber(current_funding_spread)) return inputMissing(def);
   const signFlipped = Math.sign(arm_funding_spread) !== Math.sign(current_funding_spread) && arm_funding_spread !== 0;
   const shrunkTooMuch = arm_funding_spread - current_funding_spread > cfg.rate_change_tolerance;
   if (signFlipped || shrunkTooMuch) {
@@ -59,7 +66,7 @@ function fundingRateChange(ctx: EntryContext, cfg: RiskConfig): RiskCheckResult 
 
 function orderTimeout(ctx: EntryContext): RiskCheckResult {
   const def = findCheck('ORDER_TIMEOUT');
-  if (ctx.order_timeout_occurred === undefined) return inputMissing(def);
+  if (!isPresent(ctx.order_timeout_occurred)) return inputMissing(def);
   if (ctx.order_timeout_occurred) {
     return failResult(def, 'true', 'false', 'ORDER_TIMEOUT');
   }
@@ -68,11 +75,11 @@ function orderTimeout(ctx: EntryContext): RiskCheckResult {
 
 function partialFill(ctx: EntryContext, cfg: RiskConfig): RiskCheckResult {
   const def = findCheck('PARTIAL_FILL');
-  if (ctx.hedge_state === undefined) return inputMissing(def);
+  if (!isPresent(ctx.hedge_state)) return inputMissing(def);
   if (ctx.hedge_state !== 'PARTIALLY_HEDGED') {
     return passResult(def, ctx.hedge_state, 'not PARTIALLY_HEDGED');
   }
-  if (ctx.partially_hedged_since === undefined) return inputMissing(def);
+  if (!isFiniteNumber(ctx.partially_hedged_since)) return inputMissing(def);
   const duration = ctx.now - ctx.partially_hedged_since;
   if (duration >= cfg.partial_hedge_max_duration_ms) {
     return failResult(def, `${duration}ms`, `< ${cfg.partial_hedge_max_duration_ms}ms`, 'PARTIAL_HEDGE_TIMEOUT');
@@ -82,7 +89,7 @@ function partialFill(ctx: EntryContext, cfg: RiskConfig): RiskCheckResult {
 
 function legImbalance(ctx: EntryContext, cfg: RiskConfig): RiskCheckResult {
   const def = findCheck('LEG_IMBALANCE');
-  if (ctx.hedge_ratio === undefined) return inputMissing(def);
+  if (!isFiniteNumber(ctx.hedge_ratio)) return inputMissing(def);
   if (ctx.both_legs_zero_fill) {
     return passResult(def, '0/0', 'n/a — both legs zero fill');
   }
@@ -96,7 +103,7 @@ function exchangeConnection(ctx: EntryContext): RiskCheckResult {
   const def = findCheck('EXCHANGE_CONNECTION');
   for (const leg of LEGS) {
     const conn = ctx.leg_connectivity?.[leg];
-    if (conn === undefined) return inputMissing(def);
+    if (!isPresent(conn)) return inputMissing(def);
     if (conn !== 'CONNECTED') {
       return failResult(def, `${legLabel(leg)}: ${conn}`, 'CONNECTED', 'EXCHANGE_DISCONNECTED');
     }
@@ -108,7 +115,9 @@ function marketVolatility(ctx: EntryContext, cfg: RiskConfig): RiskCheckResult {
   const def = findCheck('MARKET_VOLATILITY');
   for (const leg of LEGS) {
     const samples = ctx.leg_recent_mid_prices?.[leg];
-    if (!samples || samples.length < 2) return inputMissing(def);
+    if (!Array.isArray(samples) || samples.length < 2 || !samples.every((v) => isFiniteNumber(v))) {
+      return inputMissing(def);
+    }
   }
   for (const leg of LEGS) {
     const samples = ctx.leg_recent_mid_prices![leg]!;
@@ -143,9 +152,11 @@ function worstAction(items: RiskCheckResult[]): 'CONTINUE' | 'HALT_ENTRY' | 'EME
   return worst;
 }
 
-/** Runs all 7 Entry checks, in registry order. */
+/** Runs all 7 Entry checks, in registry order. If `ctx.now` is invalid, every item is INPUT_MISSING. */
 export function evaluateEntry(ctx: EntryContext, cfg: RiskConfig): RiskEvaluation {
-  const items = ENTRY_CHECKS.map((def) => CHECK_FNS[def.check_code](ctx, cfg));
+  const items = isFiniteNumber(ctx.now)
+    ? ENTRY_CHECKS.map((def) => CHECK_FNS[def.check_code](ctx, cfg))
+    : ENTRY_CHECKS.map((def) => inputMissing(def));
   const action = worstAction(items);
   const failed = items.filter((i) => i.status === 'FAIL');
   const legImbalanceFailed = items.some(

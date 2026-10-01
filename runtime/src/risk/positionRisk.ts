@@ -5,10 +5,17 @@
  * `EXIT_PENDING` (design.md Decision 1/3, spec.md Position requirements).
  * FAIL always requests `EMERGENCY_EXIT`; WARN never triggers an action
  * (spec "FAIL 項目的動作為 EMERGENCY_EXIT（WARN 不動作）").
+ *
+ * Every numeric input goes through `isFiniteNumber` (not a raw
+ * `=== undefined` check) so `undefined`/`NaN`/`±Infinity` are all
+ * INPUT_MISSING, never silently compared (integrator review fail-open bug
+ * — see `preTradeRisk.ts`'s header for the full rationale). If `ctx.now` is
+ * invalid, every item is INPUT_MISSING.
  */
 import { LEGS } from './types';
 import type { Leg, PositionContext, RiskCheckResult, RiskConfig, RiskEvaluation } from './types';
 import { failResult, inputMissing, passResult, warnResult } from './types';
+import { isFiniteNumber } from './validation';
 import { POSITION_CHECKS, findCheck } from './checks/registry';
 
 function legLabel(leg: Leg): string {
@@ -17,7 +24,7 @@ function legLabel(leg: Leg): string {
 
 function positionImbalance(ctx: PositionContext, cfg: RiskConfig): RiskCheckResult {
   const def = findCheck('POSITION_IMBALANCE');
-  if (ctx.hedge_ratio === undefined) return inputMissing(def);
+  if (!isFiniteNumber(ctx.hedge_ratio)) return inputMissing(def);
   if (ctx.hedge_ratio < cfg.hedge_ratio_imbalance_below) {
     return failResult(def, String(ctx.hedge_ratio), `>= ${cfg.hedge_ratio_imbalance_below}`, 'POSITION_IMBALANCE');
   }
@@ -30,9 +37,9 @@ function positionImbalance(ctx: PositionContext, cfg: RiskConfig): RiskCheckResu
 function markPriceMovement(ctx: PositionContext, cfg: RiskConfig): RiskCheckResult {
   const def = findCheck('MARK_PRICE_MOVEMENT');
   for (const leg of LEGS) {
-    const loss = ctx.leg_unrealized_loss_usdt?.[leg];
-    const margin = ctx.leg_margin_allocated_usdt?.[leg];
-    if (loss === undefined || margin === undefined) return inputMissing(def);
+    if (!isFiniteNumber(ctx.leg_unrealized_loss_usdt?.[leg]) || !isFiniteNumber(ctx.leg_margin_allocated_usdt?.[leg])) {
+      return inputMissing(def);
+    }
   }
   for (const leg of LEGS) {
     const loss = ctx.leg_unrealized_loss_usdt![leg]!;
@@ -47,7 +54,7 @@ function markPriceMovement(ctx: PositionContext, cfg: RiskConfig): RiskCheckResu
 
 function basisDivergence(ctx: PositionContext, cfg: RiskConfig): RiskCheckResult {
   const def = findCheck('BASIS_DIVERGENCE');
-  if (ctx.basis_now === undefined || ctx.basis_at_entry === undefined) return inputMissing(def);
+  if (!isFiniteNumber(ctx.basis_now) || !isFiniteNumber(ctx.basis_at_entry)) return inputMissing(def);
   const divergence = Math.abs(ctx.basis_now - ctx.basis_at_entry);
   if (divergence > cfg.max_basis_divergence_pct) {
     return failResult(def, String(divergence), `<= ${cfg.max_basis_divergence_pct}`, 'BASIS_DIVERGENCE');
@@ -61,7 +68,7 @@ function basisDivergence(ctx: PositionContext, cfg: RiskConfig): RiskCheckResult
 function fundingChange(ctx: PositionContext): RiskCheckResult {
   const def = findCheck('FUNDING_CHANGE');
   const { hedged_by, expected_funding_cashflow_usdt, estimated_exit_cost_usdt, now } = ctx;
-  if (hedged_by === undefined || expected_funding_cashflow_usdt === undefined || estimated_exit_cost_usdt === undefined) {
+  if (!isFiniteNumber(hedged_by) || !isFiniteNumber(expected_funding_cashflow_usdt) || !isFiniteNumber(estimated_exit_cost_usdt)) {
     return inputMissing(def);
   }
   const flipped = expected_funding_cashflow_usdt < -estimated_exit_cost_usdt;
@@ -86,7 +93,7 @@ function fundingChange(ctx: PositionContext): RiskCheckResult {
 
 function holdingTime(ctx: PositionContext, cfg: RiskConfig): RiskCheckResult {
   const def = findCheck('HOLDING_TIME');
-  if (ctx.entry_completed_at === undefined) return inputMissing(def);
+  if (!isFiniteNumber(ctx.entry_completed_at)) return inputMissing(def);
   const held = ctx.now - ctx.entry_completed_at;
   if (held > cfg.max_holding_time_ms) {
     return failResult(def, `${held}ms`, `<= ${cfg.max_holding_time_ms}ms`, 'HOLDING_TIME_EXCEEDED');
@@ -99,6 +106,7 @@ function exitCondition(ctx: PositionContext, cfg: RiskConfig): RiskCheckResult {
   if (ctx.exit_pending_since === undefined) {
     return passResult(def, 'not EXIT_PENDING', 'n/a');
   }
+  if (!isFiniteNumber(ctx.exit_pending_since)) return inputMissing(def);
   if (ctx.both_legs_closed === undefined) return inputMissing(def);
   if (ctx.both_legs_closed) {
     return passResult(def, 'closed', 'closed');
@@ -119,9 +127,11 @@ const CHECK_FNS: Record<string, (ctx: PositionContext, cfg: RiskConfig) => RiskC
   EXIT_CONDITION: exitCondition,
 };
 
-/** Runs all 6 Position checks, in registry order. Any FAIL requests EMERGENCY_EXIT. */
+/** Runs all 6 Position checks, in registry order. Any FAIL requests EMERGENCY_EXIT. If `ctx.now` is invalid, every item is INPUT_MISSING. */
 export function evaluatePosition(ctx: PositionContext, cfg: RiskConfig): RiskEvaluation {
-  const items = POSITION_CHECKS.map((def) => CHECK_FNS[def.check_code](ctx, cfg));
+  const items = isFiniteNumber(ctx.now)
+    ? POSITION_CHECKS.map((def) => CHECK_FNS[def.check_code](ctx, cfg))
+    : POSITION_CHECKS.map((def) => inputMissing(def));
   const failed = items.filter((i) => i.status === 'FAIL');
   const action = failed.length > 0 ? 'EMERGENCY_EXIT' : 'CONTINUE';
   const legImbalanceFailed = items.some((i) => i.check_code === 'POSITION_IMBALANCE' && i.status === 'FAIL');
