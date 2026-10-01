@@ -1,7 +1,8 @@
 // TODO(trading-schema-types): 合併後改為 import { PositionSide } from 'runtime/src/types'
 export type PositionSide = 'LONG' | 'SHORT';
 
-export type FundingSettlementStatus = 'EXPECTED' | 'ELIGIBLE' | 'SETTLED' | 'NOT_ELIGIBLE' | 'MISSED';
+import type { FundingSettlementStatus } from '../types/status';
+export type { FundingSettlementStatus };
 
 export type MarkPriceSource = 'EXCHANGE' | 'SNAPSHOT';
 

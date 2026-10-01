@@ -18,6 +18,7 @@ import type {
   ScheduleStatus,
   UpdateFundingScheduleResult,
 } from './types';
+import type { TradingEventType } from '../../types/event';
 
 const SPEC_FIELDS = ['price_multiplier', 'qty_unit_in_base', 'tick_size', 'qty_step', 'min_qty', 'min_notional'] as const;
 type SpecField = (typeof SPEC_FIELDS)[number];
@@ -39,8 +40,17 @@ export class InstrumentRegistry {
 
   constructor(private readonly eventSink: EventSink) {}
 
-  private emit(timestamp: number, type: string, exchange: ExchangeId | null, symbol: string | null, payload: Record<string, unknown>): void {
-    this.eventSink.emit({ type, timestamp, recorded_at: timestamp, exchange, symbol, trade_id: null, payload });
+  private emit(timestamp: number, eventType: TradingEventType, exchange: ExchangeId | null, symbol: string | null, payload: Record<string, unknown>): void {
+    this.eventSink.emit({
+      event_id: crypto.randomUUID(),
+      event_type: eventType,
+      timestamp,
+      recorded_at: timestamp,
+      trade_id: null,
+      ...(exchange !== null && { exchange }),
+      ...(symbol !== null && { symbol }),
+      payload,
+    });
   }
 
   get(exchange: ExchangeId, nativeSymbol: string): Instrument | undefined {

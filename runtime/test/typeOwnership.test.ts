@@ -51,14 +51,18 @@ function stripComments(code: string): string {
 }
 
 function findDuplicateDeclarations(root: string, excludeDir: string, names: readonly string[]): string[] {
-  const declPattern = /\b(?:interface|type)\s+([A-Za-z_$][\w$]*)/g;
+  // Only real declarations at statement start (`type X =`, `type X<T> =`, `interface X`), so
+  // `import { type X }` / `export type { X } from …` re-exports are not counted.
+  const declPattern =
+    /^\s*(?:export\s+)?(?:declare\s+)?(?:interface\s+([A-Za-z_$][\w$]*)|type\s+([A-Za-z_$][\w$]*)\s*(?:<[^=]*>)?\s*=)/gm;
   const violations: string[] = [];
   for (const file of sourceFiles(root)) {
     if (file === excludeDir || file.startsWith(excludeDir + sep)) continue;
     const code = stripComments(readFileSync(file, 'utf8'));
     for (const match of code.matchAll(declPattern)) {
-      if (names.includes(match[1])) {
-        violations.push(`${relative(root, file)} declares ${match[1]}`);
+      const name = match[1] ?? match[2];
+      if (names.includes(name)) {
+        violations.push(`${relative(root, file)} declares ${name}`);
       }
     }
   }

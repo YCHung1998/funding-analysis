@@ -4,28 +4,14 @@
  *
  * instrument-registry 型別定義。
  *
- * TODO(trading-schema-types): `ExchangeId`、`TradingEvent`、`EventSink` 應由
- * `runtime/src/types/` 提供（見 openspec/changes/trading-schema-types）。
- * 該 change 合併前，本檔案宣告完全相同形狀的本地型別，合併時改為 import。
+ * `ExchangeId`、`TradingEvent` 由 `runtime/src/types/`（trading-schema）提供，本檔只 re-export。
  */
 
-// TODO(trading-schema-types): 合併後改為 `import type { ExchangeId } from '../../types/ids';`
-export type ExchangeId = 'Pionex' | 'Binance' | 'Bybit' | 'Bitget' | 'OKX';
+import type { ExchangeId } from '../../types/ids';
+import type { TradingEvent } from '../../types/event';
 
-// TODO(trading-schema-types): 合併後改為 `import type { TradingEvent } from '../../types/event';`
-export interface TradingEvent {
-  type: string;
-  /** 轉換實際發生時的時間（注入的 now） */
-  timestamp: number;
-  /** 事件被寫入 / 送出的時間 */
-  recorded_at: number;
-  exchange: ExchangeId | null;
-  symbol: string | null;
-  trade_id: string | null;
-  payload: Record<string, unknown>;
-}
+export type { ExchangeId, TradingEvent };
 
-// TODO(trading-schema-types): 合併後改為 `import type { EventSink } from '../../types/event';`
 export interface EventSink {
   emit(event: TradingEvent): void;
 }

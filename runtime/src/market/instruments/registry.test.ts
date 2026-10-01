@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { InstrumentRegistry } from './registry';
 import type { EventSink, InstrumentSnapshotInput, TradingEvent } from './types';
+import { TRADING_EVENT_TYPES } from '../../types/event';
+import { assertNoCredentials } from '../../types/validate';
 
 function makeInput(overrides: Partial<InstrumentSnapshotInput> = {}): InstrumentSnapshotInput {
   return {
@@ -89,7 +91,24 @@ describe('InstrumentRegistry.applySnapshot', () => {
     registry.applySnapshot('Binance', [], 2000);
     const instrument = registry.get('Binance', 'OLDUSDT')!;
     expect(instrument.status).toBe('DELISTED');
-    expect(events.some((e) => e.type === 'INSTRUMENT_STATUS_CHANGED' && e.payload.reason === 'ABSENT_FROM_SOURCE')).toBe(true);
+    expect(events.some((e) => e.event_type === 'INSTRUMENT_STATUS_CHANGED' && e.payload.reason === 'ABSENT_FROM_SOURCE')).toBe(true);
+  });
+
+  it('emitted events use the canonical TradingEvent shape (runtime/src/types/event)', () => {
+    const { sink, events } = makeSink();
+    const registry = new InstrumentRegistry(sink);
+    registry.applySnapshot('Binance', [makeInput({ instrument_id: 'Binance:OLDUSDT', native_symbol: 'OLDUSDT' })], 1000);
+    expect(events.length).toBeGreaterThan(0);
+    for (const e of events) {
+      expect(typeof e.event_id).toBe('string');
+      expect(e.event_id.length).toBeGreaterThan(0);
+      expect(TRADING_EVENT_TYPES).toContain(e.event_type);
+      expect(e.trade_id).toBeNull();
+      expect(e.timestamp).toBe(1000);
+      expect(e.exchange).toBe('Binance');
+      expect(() => assertNoCredentials(e, [])).not.toThrow();
+    }
+    expect(new Set(events.map((e) => e.event_id)).size).toBe(events.length);
   });
 
   it('[spec] Duplicate key on one exchange marks both ambiguous', () => {
@@ -105,7 +124,7 @@ describe('InstrumentRegistry.applySnapshot', () => {
     );
     expect(registry.get('Binance', 'PEPEUSDT')!.ambiguous).toBe(true);
     expect(registry.get('Binance', '1000PEPEUSDT')!.ambiguous).toBe(true);
-    expect(events.some((e) => e.type === 'INSTRUMENT_AMBIGUOUS')).toBe(true);
+    expect(events.some((e) => e.event_type === 'INSTRUMENT_AMBIGUOUS')).toBe(true);
   });
 
   it('[spec] Tick size change emits INSTRUMENT_SPEC_CHANGED', () => {
@@ -116,7 +135,7 @@ describe('InstrumentRegistry.applySnapshot', () => {
     const instrument = registry.get('Binance', 'BTCUSDT')!;
     expect(instrument.tick_size).toBe(0.01);
     expect(instrument.updated_at).toBe(2000);
-    const specEvent = events.find((e) => e.type === 'INSTRUMENT_SPEC_CHANGED');
+    const specEvent = events.find((e) => e.event_type === 'INSTRUMENT_SPEC_CHANGED');
     expect(specEvent?.payload).toMatchObject({ field: 'tick_size', from: 0.1, to: 0.01 });
   });
 
@@ -156,7 +175,7 @@ describe('InstrumentRegistry.updateFundingSchedule', () => {
     const registry = new InstrumentRegistry(sink);
     registry.applySnapshot('Bybit', [makeInput({ exchange: 'Bybit', instrument_id: 'Bybit:BTCUSDT', funding: { ...makeInput().funding, exchange_timestamp: 1, funding_interval_hours: 8 } })], 1000);
     registry.updateFundingSchedule('Bybit', 'BTCUSDT', { next_funding_time: 20_000, funding_interval_hours: 1, exchange_timestamp: 2 }, 5000);
-    const changed = events.find((e) => e.type === 'FUNDING_SCHEDULE_CHANGED');
+    const changed = events.find((e) => e.event_type === 'FUNDING_SCHEDULE_CHANGED');
     expect(changed?.payload).toMatchObject({ from: 8, to: 1 });
   });
 

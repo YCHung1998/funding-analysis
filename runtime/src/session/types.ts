@@ -1,5 +1,5 @@
-// TODO(trading-schema-types): 合併後改為 import { ExchangeId } from 'runtime/src/types'
-export type ExchangeId = 'Pionex' | 'Binance' | 'Bybit' | 'Bitget' | 'OKX';
+import type { ExchangeId } from '../types/ids';
+export type { ExchangeId };
 
 /** One leg of a candidate pair: just enough to look up its venue rule and exchange clock. */
 export interface SettlementLeg {

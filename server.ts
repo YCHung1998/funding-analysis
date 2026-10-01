@@ -70,7 +70,8 @@ async function refreshBinance(now: number): Promise<void> {
       now,
       onUnknown: (field, value, symbol) =>
         consoleEventSink.emit({
-          type: 'INSTRUMENT_UNKNOWN_VALUE',
+          event_id: crypto.randomUUID(),
+          event_type: 'INSTRUMENT_UNKNOWN_VALUE',
           timestamp: now,
           recorded_at: now,
           exchange: 'Binance',
@@ -100,7 +101,8 @@ async function refreshBybit(now: number): Promise<void> {
       now,
       onUnknown: (field, value, symbol) =>
         consoleEventSink.emit({
-          type: 'INSTRUMENT_UNKNOWN_VALUE',
+          event_id: crypto.randomUUID(),
+          event_type: 'INSTRUMENT_UNKNOWN_VALUE',
           timestamp: now,
           recorded_at: now,
           exchange: 'Bybit',
@@ -130,7 +132,8 @@ async function refreshOkx(now: number): Promise<void> {
       now,
       onUnknown: (field, value, symbol) =>
         consoleEventSink.emit({
-          type: 'INSTRUMENT_UNKNOWN_VALUE',
+          event_id: crypto.randomUUID(),
+          event_type: 'INSTRUMENT_UNKNOWN_VALUE',
           timestamp: now,
           recorded_at: now,
           exchange: 'OKX',
@@ -162,7 +165,8 @@ async function refreshBitget(now: number): Promise<void> {
       now,
       onUnknown: (field, value, symbol) =>
         consoleEventSink.emit({
-          type: 'INSTRUMENT_UNKNOWN_VALUE',
+          event_id: crypto.randomUUID(),
+          event_type: 'INSTRUMENT_UNKNOWN_VALUE',
           timestamp: now,
           recorded_at: now,
           exchange: 'Bitget',
@@ -191,7 +195,8 @@ async function refreshPionex(now: number): Promise<void> {
       now,
       onUnknown: (field, value, symbol) =>
         consoleEventSink.emit({
-          type: 'INSTRUMENT_UNKNOWN_VALUE',
+          event_id: crypto.randomUUID(),
+          event_type: 'INSTRUMENT_UNKNOWN_VALUE',
           timestamp: now,
           recorded_at: now,
           exchange: 'Pionex',

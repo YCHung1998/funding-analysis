@@ -1,5 +1,5 @@
-// TODO(trading-schema-types): 合併後改為 import { ExchangeId } from 'runtime/src/types'
-export type ExchangeId = 'Pionex' | 'Binance' | 'Bybit' | 'Bitget' | 'OKX';
+import type { ExchangeId } from '../types/ids';
+export type { ExchangeId };
 
 /**
  * Settlement rule for one exchange, provided by that exchange's adapter
