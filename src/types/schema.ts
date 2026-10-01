@@ -124,6 +124,14 @@ export interface TradeLegResult {
   net_pnl: number;
 }
 
+/**
+ * @deprecated v0.1 Pionex×Binance-centric result shape (spec §2.1, C-11).
+ * Replaced by `TradeResult` in `runtime/src/types/result.ts` (v0.2).
+ * Migration order (design.md Decision 7, trading-schema-types): this is
+ * step 5 of 6 — migrate after `OrderState`, `SimulatedOrderLeg`,
+ * `PositionState`, `TimelineMilestone`; before `FunnelCandidate`. Each step
+ * is its own PR with a characterization test locking current output first.
+ */
 export interface ArbitrageTradeResult {
   id: string;
   symbol: string;
