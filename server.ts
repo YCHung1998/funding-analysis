@@ -19,6 +19,7 @@ import { normalizeBybitInstruments } from './runtime/src/adapters/bybit/instrume
 import { normalizeOkxInstruments } from './runtime/src/adapters/okx/instruments';
 import { normalizeBitgetInstruments } from './runtime/src/adapters/bitget/instruments';
 import { normalizePionexInstruments } from './runtime/src/adapters/pionex/instruments';
+import { mapBitgetFundingRateSchedule } from './server/bitgetFundingSchedule';
 import type { ExchangeId, EventSink, TradingEvent, InstrumentSourceStatus } from './runtime/src/market/instruments/types';
 
 dotenv.config();
@@ -153,8 +154,8 @@ async function refreshBitget(now: number): Promise<void> {
       url: 'https://api.bitget.com/api/v2/mix/market/contracts?productType=USDT-FUTURES',
     });
     if (contracts.data?.code !== '00000') throw new Error(`Bitget API error: ${contracts.data?.msg}`);
-    // 本 change 未實作逐合約 current-fund-rate 批次刷新（見 report「open questions」）；
-    // 結算時間維持 MISSING，matchPair 會以 FUNDING_TIME_MISSING 否決而非假設 8h。
+    // 結算時間不隨本次 metadata 快照提供，由 refreshBitgetFundingSchedule() 以
+    // current-fund-rate 批次端點獨立刷新（design.md Decision 5：5 分鐘節奏）。
     const items = normalizeBitgetInstruments({
       contracts: contracts.data?.data ?? [],
       fundingRateSchedule: [],
@@ -215,6 +216,43 @@ async function refreshRegistry(): Promise<void> {
   console.log(`[instrument-registry] refresh complete: ${registrySuccessfulSourceCount}/5 sources OK`);
 }
 
+// --- Bitget 資金費時程獨立刷新（design.md Decision 5）---
+// GET current-fund-rate?productType=USDT-FUTURES 不帶 symbol 即批次回傳全部合約
+// （2026-10-01 實測：825 筆、單次請求），每 5 分鐘刷新一次；偵測到 STALE 時可提前刷新，
+// 但同所兩次間隔 ≥ 30 秒。
+const BITGET_FUNDING_SCHEDULE_REFRESH_INTERVAL_MS = 300_000;
+const BITGET_FUNDING_SCHEDULE_MIN_REFRESH_GAP_MS = 30_000;
+let lastBitgetFundingScheduleRefreshAt = 0;
+
+async function refreshBitgetFundingSchedule(now: number): Promise<void> {
+  lastBitgetFundingScheduleRefreshAt = now;
+  try {
+    const res = await restClient.getJson<any>({
+      exchange: 'Bitget',
+      url: 'https://api.bitget.com/api/v2/mix/market/current-fund-rate?productType=USDT-FUTURES',
+    });
+    if (res.data?.code !== '00000') throw new Error(`Bitget API error: ${res.data?.msg}`);
+    const entries = mapBitgetFundingRateSchedule(res.data?.data ?? [], now);
+    for (const entry of entries) {
+      registry.updateFundingSchedule('Bitget', entry.native_symbol, entry.update, now);
+    }
+    console.log(`[instrument-registry] Bitget funding schedule refreshed: ${entries.length} symbols`);
+  } catch (err) {
+    console.error('[instrument-registry] Bitget funding schedule refresh failed:', err);
+  }
+}
+
+/** 偵測 Bitget 是否有 TRADING 合約的結算時程為 STALE，若有且距上次刷新 ≥ 30 秒則提前刷新。 */
+async function refreshBitgetFundingScheduleIfStale(now: number): Promise<void> {
+  if (now - lastBitgetFundingScheduleRefreshAt < BITGET_FUNDING_SCHEDULE_MIN_REFRESH_GAP_MS) return;
+  const hasStale = registry
+    .list({ exchange: 'Bitget', status: 'TRADING' })
+    .some((i) => i.funding.schedule_status === 'STALE');
+  if (hasStale) {
+    await refreshBitgetFundingSchedule(now);
+  }
+}
+
 function registrySourcesSnapshot(): Record<string, InstrumentSourceStatus | undefined> {
   const exchanges: ExchangeId[] = ['Pionex', 'Binance', 'Bybit', 'Bitget', 'OKX'];
   const out: Record<string, InstrumentSourceStatus | undefined> = {};
@@ -243,6 +281,10 @@ app.get('/api/market/live-scan', async (_req, res) => {
         ...liveScanCache.data,
       });
     }
+
+    // Bitget 結算時間經獨立 5 分鐘刷新提供；若已 STALE 且距上次刷新 ≥30 秒則提前刷新
+    // （design.md Decision 5 / Risks「Bitget 結算時間由 5 分鐘刷新提供，結算後短暫 STALE」）。
+    await refreshBitgetFundingScheduleIfStale(now);
 
     const t0 = Date.now();
 
@@ -598,10 +640,15 @@ app.get('/api/market/live-klines', async (req, res) => {
 
 async function start() {
   // 非阻塞啟動刷新（design.md Decision 9 第 2 點）：app.listen 不等待註冊表就緒。
-  refreshRegistry().catch(err => console.error('[instrument-registry] initial refresh failed:', err));
+  refreshRegistry()
+    .then(() => refreshBitgetFundingSchedule(Date.now()))
+    .catch(err => console.error('[instrument-registry] initial refresh failed:', err));
   setInterval(() => {
     refreshRegistry().catch(err => console.error('[instrument-registry] periodic refresh failed:', err));
   }, INSTRUMENT_REFRESH_INTERVAL_MS);
+  setInterval(() => {
+    refreshBitgetFundingSchedule(Date.now()).catch(err => console.error('[instrument-registry] Bitget funding schedule periodic refresh failed:', err));
+  }, BITGET_FUNDING_SCHEDULE_REFRESH_INTERVAL_MS);
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

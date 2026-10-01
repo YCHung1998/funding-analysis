@@ -11,7 +11,7 @@
 - [x] 2.1 `canonical.ts`：`instrument_key`、倍數優先序（OVERRIDE → METADATA → PREFIX → NONE）、前綴白名單（`1INCH` 不誤判）、`qty_unit_in_base`；先寫 spec 中 6 個 Scenario 的失敗測試
 - [x] 2.2 Binance adapter（`exchangeInfo` + `fundingInfo` + `premiumIndex`）：身分、類型（`TRADIFI_PERPETUAL`）、狀態（`SETTLING` → `DELISTING`、未知 → `UNKNOWN`）、`PRICE_FILTER` / `LOT_SIZE` / `MIN_NOTIONAL`、週期（未列出 = 8，`EXCHANGE_DOC_DEFAULT`）、`nextFundingTime = 0` → `MISSING`
 - [x] 2.3 Bybit adapter（`instruments-info` 分頁 + tickers）：`symbolType = 'stock'` → TradFi、`Delivering` → `DELISTING`、`fundingInterval` 分鐘換算小時、`lotSizeFilter` / `priceFilter`
-- [x] 2.4 OKX（`ctVal`/`ctMult`、週期 = `nextFundingTime − fundingTime`）、Bitget（tick = `priceEndStep × 10^−pricePlace`、`sizeMultiplier` 步進、`current-fund-rate` 時程）、Pionex（`quoteCurrency ≠ USDT` → `INVERSE_PERPETUAL`、週期 `UNKNOWN`）三個掃描用 adapter，含信封錯誤處理
+- [x] 2.4 OKX（`ctVal`/`ctMult`、週期 = `nextFundingTime − fundingTime`）、Bitget（tick = `priceEndStep × 10^−pricePlace`、`sizeMultiplier` 步進、`current-fund-rate` 時程 ✅ 已實測 `GET /api/v2/mix/market/current-fund-rate?productType=USDT-FUTURES` 不帶 `symbol` 即批次回傳全部 825 筆合約，見 `server/bitgetFundingSchedule.ts` 與 2026-10-01 integrator review 後補的 commit）、Pionex（`quoteCurrency ≠ USDT` → `INVERSE_PERPETUAL`、週期 `UNKNOWN`）三個掃描用 adapter，含信封錯誤處理
 
 ## 3. 註冊表核心
 
