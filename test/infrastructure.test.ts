@@ -7,13 +7,21 @@ describe('test infrastructure', () => {
     expect(() => fetch('https://fapi.binance.com/fapi/v1/premiumIndex')).toThrow(NETWORK_DISABLED_MESSAGE);
   });
 
-  it('test.include 含四個納入樣式（含 runtime）', () => {
+  it('test.include 含五個納入樣式（含 runtime 與 React tsx 元件測試）', () => {
+    // paper-trading-ui change: added 'src/**/*.test.tsx' so React Testing
+    // Library component tests (jsdom env, see environmentMatchGlobs below)
+    // are discovered alongside the existing four node-environment patterns.
     expect(config.test?.include).toEqual([
       'src/**/*.test.ts',
+      'src/**/*.test.tsx',
       'server/**/*.test.ts',
       'runtime/**/*.test.ts',
       'test/**/*.test.ts',
     ]);
+  });
+
+  it('預設環境仍為 node（*.test.tsx 改以檔案內 docblock 宣告 jsdom）', () => {
+    expect(config.test?.environment).toBe('node');
   });
 
   it('排除 node_modules 與 dist', () => {

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { Suspense, lazy, useState } from 'react';
 import { Header, ActiveTab } from './components/Header';
 import { FunnelScannerView } from './components/FunnelScannerView';
 import { DryRunConsole } from './components/DryRunConsole';
@@ -18,6 +18,11 @@ import { HelpModal } from './components/HelpModal';
 import { MOCK_DATASETS, runAllBacktests } from './data/mockMarketData';
 import { runFunnelScan } from './engine/funnelScanner';
 import { FunnelCandidate } from './types/systemSpec';
+
+// Paper Trading (FE-06): lazy-loaded so its chunk is never fetched by the
+// default `funnel` tab (openspec/changes/paper-trading-ui spec.md "預設分頁
+// 不載入 Paper chunk").
+const PaperTradingTab = lazy(() => import('./features/paperTrading/PaperTradingTab'));
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('funnel');
@@ -128,6 +133,19 @@ export default function App() {
         {/* System Spec v0.1 Knowledge Base & Notes */}
         {activeTab === 'spec' && (
           <SpecViewer />
+        )}
+
+        {/* Paper Trading: observer-only view of the Paper Trading Runtime */}
+        {activeTab === 'paper' && (
+          <Suspense
+            fallback={
+              <div className="py-12 text-center text-sm text-slate-400" role="status">
+                Loading Paper Trading…
+              </div>
+            }
+          >
+            <PaperTradingTab />
+          </Suspense>
         )}
       </main>
 
