@@ -8,26 +8,26 @@
 
 ## 2. 時鐘（trading-clock）
 
-- [ ] 2.1 建立 `runtime/` TypeScript 骨架（tsconfig、vitest 納入 `runtime/**/*.test.ts`、`npm test` 涵蓋）並加入「`runtime/src/` 禁止直接使用 `Date.now` / `setTimeout`」的自動檢查測試
-- [ ] 2.2 `Clock` 介面 + `VirtualClock`（時間排序、同時到期依註冊順序、取消）＋ 共用契約測試
-- [ ] 2.3 `RealClock`：每所各自 offset / 誤差（RTT 中點）、參考時間軸與備援順位、偏差跳動與誤差過大判定、每腿保守換算函式；以純函式與 VirtualClock 模擬不同步情境測試
+- [x] 2.1 建立 `runtime/` TypeScript 骨架（tsconfig、vitest 納入 `runtime/**/*.test.ts`、`npm test` 涵蓋）並加入「`runtime/src/` 禁止直接使用 `Date.now` / `setTimeout`」的自動檢查測試（satisfied by shared skeleton 7eae294；verified red/green here — see report）
+- [x] 2.2 `Clock` 介面 + `VirtualClock`（時間排序、同時到期依註冊順序、取消）＋ 共用契約測試
+- [x] 2.3 `RealClock`：每所各自 offset / 誤差（RTT 中點）、參考時間軸與備援順位、偏差跳動與誤差過大判定；以純函式與 VirtualClock 模擬不同步情境測試（每腿保守換算函式移至 settlement-session 任務 3.2，因屬場次時間表計算）
 
 ## 3. 結算場次（settlement-session）
 
-- [ ] 3.1 交易所結算規則表（Binance 15/15 s、Bybit 5/5 s、OKX 0/60 s 預留）與 `pair_guard` 計算，經 adapter 介面提供（策略層無交易所分支）
-- [ ] 3.2 階段時間表計算與設定檔驗證（Binance × Bybit → T-25s / T-15s / T+15s / T+30s；OKX 腿 → T+75s；衝突設定啟動失敗）
-- [ ] 3.3 `SettlementSession` 狀態機：由時鐘驅動 `WATCH → … → DONE / SKIPPED`，每次轉換產生 `SESSION_PHASE_CHANGED` 事件；全域與單場次持倉上限
-- [ ] 3.4 合約資格判斷：trading_exchanges、結算時間對齊、週期 ≥ 2h，於 SHORTLIST 與 ARM 重新評估（含週期臨時轉為 1h 的案例）
+- [x] 3.1 交易所結算規則表（Binance 15/15 s、Bybit 5/5 s、OKX 0/60 s 預留）與 `pair_guard` 計算，經 adapter 介面提供（策略層無交易所分支）
+- [x] 3.2 階段時間表計算與設定檔驗證（Binance × Bybit → T-25s / T-15s / T+15s / T+30s；OKX 腿 → T+75s；衝突設定啟動失敗）
+- [x] 3.3 `SettlementSession` 狀態機：由時鐘驅動 `WATCH → … → DONE / SKIPPED`，每次轉換產生 `SESSION_PHASE_CHANGED` 事件；全域與單場次持倉上限（`DONE` 由外部於資金費入帳定案後呼叫 `markDone()`，見報告）
+- [x] 3.4 合約資格判斷：trading_exchanges、結算時間對齊、週期 ≥ 2h，於 SHORTLIST 與 ARM 重新評估（含週期臨時轉為 1h 的案例）
 
 ## 4. 機會失效（opportunity-lifecycle）
 
-- [ ] 4.1 失效規則（換階段、輸入變動超過容忍值、資料過舊、最長存活、資格改變）與 ARM 最終決策（spread 翻轉、淨值低於門檻），每次狀態轉換產生對應事件
+- [x] 4.1 失效規則（換階段、輸入變動超過容忍值、資料過舊、最長存活、資格改變）與 ARM 最終決策（spread 翻轉、淨值低於門檻），每次狀態轉換產生對應事件（資格改變由 3.4 `evaluateContractEligibility` 提供，由呼叫端合併判斷，見報告）
 
 ## 5. 結單與入帳（funding-settlement-rules）
 
-- [ ] 5.1 進場截止 / `hedged_by` 未對沖轉 LEG_IMBALANCE / 鎖定區間禁止減倉 / `exit_at` 不等確認即觸發平倉的守門邏輯（以 Execution 介面的假實作驗證）
-- [ ] 5.2 `FundingSettlement` 推定：EXPECTED → ELIGIBLE → SETTLED / NOT_ELIGIBLE / MISSED、現金流正負號、公布延遲記錄、mark price 來源標記，以及 TradeResult `funding_confirmed` / `finalized_at` 定案規則
+- [x] 5.1 進場截止 / `hedged_by` 未對沖轉 LEG_IMBALANCE / 鎖定區間禁止減倉 / `exit_at` 不等確認即觸發平倉的守門邏輯（以 Execution 介面的假實作驗證）
+- [x] 5.2 `FundingSettlement` 推定：EXPECTED → ELIGIBLE → SETTLED / NOT_ELIGIBLE / MISSED、現金流正負號、公布延遲記錄、mark price 來源標記，以及 TradeResult `funding_confirmed` / `finalized_at` 定案規則（`EXPECTED` 由呼叫端於 ARM 建立，本模組處理 ARM 之後的推定，見報告）
 
 ## 6. 收尾
 
-- [ ] 6.1 執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate paper-trading-event-loop` 全數通過並附輸出；更新 HANDOFF §7 交接紀錄
+- [ ] 6.1 執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate paper-trading-event-loop` 全數通過並附輸出（已完成，證據見報告：26 test files / 135 tests passed）；更新 HANDOFF §7 交接紀錄（未做 — HANDOFF.md 不在本 agent 編輯範圍，確切文字見報告，留給 integrator 貼上）
