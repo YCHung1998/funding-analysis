@@ -30,4 +30,4 @@
 
 ## 6. 收尾
 
-- [ ] 6.1 執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate paper-trading-event-loop` 全數通過並附輸出；更新 HANDOFF §7 交接紀錄
+- [ ] 6.1 執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate paper-trading-event-loop` 全數通過並附輸出（已完成，證據見報告：26 test files / 135 tests passed）；更新 HANDOFF §7 交接紀錄（未做 — HANDOFF.md 不在本 agent 編輯範圍，確切文字見報告，留給 integrator 貼上）
