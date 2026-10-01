@@ -8,9 +8,9 @@
 
 ## 2. 時鐘（trading-clock）
 
-- [ ] 2.1 建立 `runtime/` TypeScript 骨架（tsconfig、vitest 納入 `runtime/**/*.test.ts`、`npm test` 涵蓋）並加入「`runtime/src/` 禁止直接使用 `Date.now` / `setTimeout`」的自動檢查測試
-- [ ] 2.2 `Clock` 介面 + `VirtualClock`（時間排序、同時到期依註冊順序、取消）＋ 共用契約測試
-- [ ] 2.3 `RealClock`：每所各自 offset / 誤差（RTT 中點）、參考時間軸與備援順位、偏差跳動與誤差過大判定、每腿保守換算函式；以純函式與 VirtualClock 模擬不同步情境測試
+- [x] 2.1 建立 `runtime/` TypeScript 骨架（tsconfig、vitest 納入 `runtime/**/*.test.ts`、`npm test` 涵蓋）並加入「`runtime/src/` 禁止直接使用 `Date.now` / `setTimeout`」的自動檢查測試（satisfied by shared skeleton 7eae294；verified red/green here — see report）
+- [x] 2.2 `Clock` 介面 + `VirtualClock`（時間排序、同時到期依註冊順序、取消）＋ 共用契約測試
+- [x] 2.3 `RealClock`：每所各自 offset / 誤差（RTT 中點）、參考時間軸與備援順位、偏差跳動與誤差過大判定；以純函式與 VirtualClock 模擬不同步情境測試（每腿保守換算函式移至 settlement-session 任務 3.2，因屬場次時間表計算）
 
 ## 3. 結算場次（settlement-session）
 
