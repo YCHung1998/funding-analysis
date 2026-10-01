@@ -139,6 +139,23 @@ describe('computeLiveScanNetPnl（net-cost-model：改呼叫 estimateExpectedNet
   it('不得默默產生獲利數字：NaN rate 輸入拋出', () => {
     expect(() => pair(NaN, 0.004, 150_000_000, 150_000_000)).toThrow(TypeError);
   });
+
+  it('[Integrator review] 回傳 targetNotionalPerLegUsdt / expectedBasisPnlUsdt / basisRiskChargeUsdt 供呼叫端換算 pct（避免 2x/1x notional 混用）', () => {
+    const result = pair(0, 0.004, 150_000_000, 150_000_000);
+    expect(result.targetNotionalPerLegUsdt).toBe(1000);
+    expect(result.expectedBasisPnlUsdt).toBeCloseTo(0, 9); // mid_long === mid_short === 100
+    expect(result.basisRiskChargeUsdt).toBeCloseTo(0, 9); // basis_sigma_pct = 0 in live-scan config
+  });
+
+  it('[Integrator review] 恆等式：funding + (basisPnl + slippageAttribution) - fees - basisRiskCharge = net（±1e-9）', () => {
+    const result = pair(0, 0.004, 150_000_000, 150_000_000);
+    const reconstructed =
+      result.expectedFundingUsdt +
+      (result.expectedBasisPnlUsdt + result.slippageAttributionUsdt) -
+      result.expectedFeesUsdt -
+      result.basisRiskChargeUsdt;
+    expect(reconstructed).toBeCloseTo(result.expectedNetPnlUsdt, 9);
+  });
 });
 
 describe('resolveSettlement', () => {

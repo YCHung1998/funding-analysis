@@ -59,6 +59,9 @@ export interface LiveMarketCandidate {
   entry_basis_pct?: number;
   slippage_model?: { long: string; short: string };
   fee_config_version?: string;
+  // [Integrator review fix] single-leg notional that est_slippage_pct / fee_drag_pct /
+  // expected_net_pnl_pct are all consistently denominated by (spec §5 mapping).
+  target_notional_per_leg_usdt?: number;
 }
 
 export interface LiveScanResponse {

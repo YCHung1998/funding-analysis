@@ -65,9 +65,15 @@ export interface LiveScanCandidate {
   volume_24h: number;
   long_volume_24h: number;
   short_volume_24h: number;
-  /** @deprecated net-cost-model: 以 |slippage_attribution_usdt| / notional 近似，顯示用 */
+  /**
+   * [Integrator review fix] Single-leg target notional actually used to compute every *_pct
+   * field below (spec §5: `estimated_fee_pct = expected_fees_usdt / target_notional`). All pct
+   * fields here are consistently denominated by THIS value, not a separately hardcoded constant.
+   */
+  target_notional_per_leg_usdt: number;
+  /** @deprecated net-cost-model: 以 |slippage_attribution_usdt| / target_notional_per_leg_usdt 計算，顯示用 */
   est_slippage_pct: number;
-  /** @deprecated net-cost-model: 改為該配對實際手續費率（兩腿 taker 合計），不再是固定 0.20% */
+  /** @deprecated net-cost-model: 改為該配對實際手續費率（兩腿 taker 合計，/ target_notional_per_leg_usdt），不再是固定 0.20% */
   fee_drag_pct: number;
   /** @deprecated net-cost-model: 改為淨值口徑（= net_spread_pct），毛 spread 請見 `spread` 欄位 */
   expected_net_pnl_pct: number;
@@ -207,8 +213,14 @@ export function buildLiveScanCandidates(params: BuildLiveScanCandidatesParams): 
       volume_24h: volume24h,
       long_volume_24h: longLeg.data.volume_24h!,
       short_volume_24h: shortLeg.data.volume_24h!,
-      est_slippage_pct: volume24h > 0 ? Math.abs(netPnl.slippageAttributionUsdt) / (2 * 1000) : 0,
-      fee_drag_pct: netPnl.expectedFeesUsdt / (2 * 1000),
+      // [Integrator review fix] denominator is the SAME single-leg target notional passed to
+      // (and echoed back by) the cost model — not a separately hardcoded `2 * 1000`. Volume is
+      // already guaranteed non-null at this point (candidates with a null leg volume were
+      // `continue`d above, P3 rule), so there is no "missing data -> silently report 0" branch:
+      // whatever the real attribution is, that's what gets divided through.
+      target_notional_per_leg_usdt: netPnl.targetNotionalPerLegUsdt,
+      est_slippage_pct: Math.abs(netPnl.slippageAttributionUsdt) / netPnl.targetNotionalPerLegUsdt,
+      fee_drag_pct: netPnl.expectedFeesUsdt / netPnl.targetNotionalPerLegUsdt,
       expected_net_pnl_pct: netPnl.netSpreadPct,
       expected_net_pnl_usdt: netPnl.expectedNetPnlUsdt,
       meets_threshold: netPnl.meetsThreshold,

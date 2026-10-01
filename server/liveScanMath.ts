@@ -126,6 +126,18 @@ export interface LiveScanNetPnlResult {
   entryBasisPct: number;
   meetsThreshold: boolean;
   qualified: boolean;
+  /**
+   * [Integrator review fix] The single-leg target notional actually used for this estimate.
+   * Callers MUST use this (not a hardcoded constant) as the denominator when converting any of
+   * the *Usdt fields above into a percentage — spec §5 mapping is
+   * `estimated_fee_pct = expected_fees_usdt / target_notional`, i.e. single-leg notional, not
+   * 2x (double-leg) notional.
+   */
+  targetNotionalPerLegUsdt: number;
+  /** Other Price PnL component (basis), in USDT — needed to reconcile net_pnl from parts. */
+  expectedBasisPnlUsdt: number;
+  /** "Other Costs" component, in USDT — needed to reconcile net_pnl from parts. */
+  basisRiskChargeUsdt: number;
 }
 
 /**
@@ -180,5 +192,8 @@ export function computeLiveScanNetPnl(input: LiveScanNetPnlInput, researchMinNet
     entryBasisPct: result.entry_basis_pct,
     meetsThreshold: result.qualified && result.expected_net_pnl_usdt >= researchMinNetPnlUsdt,
     qualified: result.qualified,
+    targetNotionalPerLegUsdt: targetNotional,
+    expectedBasisPnlUsdt: result.expected_basis_pnl_usdt,
+    basisRiskChargeUsdt: result.basis_risk_charge_usdt,
   };
 }

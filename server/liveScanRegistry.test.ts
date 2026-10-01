@@ -195,5 +195,14 @@ describe('buildLiveScanCandidates', () => {
     expect(y.rank!).toBeLessThan(x.rank!);
     expect(x.meets_threshold).toBe(false);
     expect(y.meets_threshold).toBe(true);
+
+    // [Integrator review] pct fields MUST reconcile with expected_net_pnl_usdt using a single,
+    // consistent single-leg notional (target_notional_per_leg_usdt) — not a mix of 1x and 2x.
+    for (const candidate of [x, y]) {
+      const notional = candidate.target_notional_per_leg_usdt;
+      const reconstructedNetUsdt =
+        candidate.spread * notional - candidate.fee_drag_pct * notional - candidate.est_slippage_pct * notional + candidate.entry_basis_pct * 0; // basis=0 in this fixture (mark=mid=1 both legs)
+      expect(reconstructedNetUsdt).toBeCloseTo(candidate.expected_net_pnl_usdt, 9);
+    }
   });
 });
