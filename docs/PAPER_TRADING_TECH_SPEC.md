@@ -222,6 +222,28 @@ Data Age:            44ms
 
 📎 `data_age_ms` 必須先扣除本機與交易所的時鐘偏差（BE-07，實測本機慢 57–62 ms），否則門檻判斷失真。
 
+### 8.1 時鐘（✅ C-05 / D-8，`runtime/src/clock/`）
+
+```typescript
+interface Clock {
+  now(): number;                                         // 參考時間軸（預設 Binance），epoch ms
+  exchangeNow(ex: ExchangeId): number;                   // 該交易所的時間
+  toLocal(ex: ExchangeId, exchangeTime: number): number; // 交易所時間 → 本地排程時間
+  offset(ex: ExchangeId): { offsetMs: number; errorMs: number; calibratedAt: number };
+  reference(): ExchangeId;
+  at(time: number, cb: () => void): TimerHandle;
+  after(ms: number, cb: () => void): TimerHandle;
+  cancel(handle: TimerHandle): void;
+}
+```
+
+- **每腿以自己交易所的時鐘判定資格**（T = 該交易所時間的整點）。決策截止時間各腿分別換算、加上該腿誤差，取保守值（T 之前的截止取最早、T 之後取最晚）；與配對是否包含參考交易所無關。
+- **參考時間軸**（顯示、紀錄、重播）：`reference_clock_priority` 預設 `['Binance','Bybit','OKX']`；參考所斷線或校正過期時改用下一順位，事件記錄 `clock_reference`、`clock_offset_ms`。
+- `RealClock`：`process.hrtime` 單調時鐘 + 每所 offset（查伺服器時間、取往返中點，`errorMs = RTT / 2`）；每 `clock_calibration_interval_ms`（60 s）校正一次，SHORTLIST 與 ARM 開始時強制校正。offset 跳動 > `clock_jump_threshold_ms`（100 ms）→ `CLOCK_OFFSET_JUMP`；任一交易腿 `errorMs > clock_max_error_ms`（500 ms）或校正過期 → Pre-Trade Risk 以 `CLOCK_UNRELIABLE` 阻擋新進場。
+- `VirtualClock`：`advanceTo(t)` 依到期時間（同時到期依註冊順序）觸發，callback 內 `now()` 為該 callback 的到期時間；Paper 與 Backtest 共用同一套邏輯。
+- 資料年齡：`data_age_ms = local_received − toLocal(ex, exchange_timestamp)`。
+- `runtime/src/` 內除 `RealClock` 外禁止直接呼叫 `Date.now()` / `setTimeout` / `setInterval`（`runtime/test/architecture.test.ts` 把關）。
+
 ---
 
 ## 9. Scanner Runtime
@@ -245,17 +267,15 @@ All Symbols
 
 ## 10. Opportunity TTL
 
-Opportunity 不能永久有效。每筆有 `created_at`、`expires_at`：
+Opportunity 不能永久有效。✅ C-05（D-3）：以**失效規則**取代固定 TTL，任一條件成立即 `EXPIRED` 或 `REJECTED`（附原因）：
 
-```text
-Opportunity detected  15:30:00
-TTL                   2 seconds
-15:30:02              → EXPIRED
-```
+1. **換階段**：場次進入下一階段時，舊階段的評估結果作廢、須重新評估（SHORTLIST 的結果到 ARM 必須重算）。
+2. **輸入變動超過容忍值**：任一腿費率變動 > `rate_change_tolerance`（預設 0.0002）、價差變動 > `price_change_tolerance_pct`（預設 0.1%）、盤口可成交量低於需求。
+3. **資料過舊**：任一輸入的 `data_age_ms > data_stale_threshold_ms`。
+4. **最長存活**：`now − detected_at > opportunity_max_age_ms`（安全上限，寫入 `expires_at`）。
+5. **資格改變**：ARM 時重新讀取週期，任一腿 < 2h 或兩腿結算時間不再對齊 → `REJECTED`。
 
-市場資料發生重大變化（Funding changed、Price moved、Orderbook changed）→ Opportunity 必須重新驗證。
-
-> ⚠️ 待決 C-05（部分決議）：資料層確定為 WebSocket 事件驅動；**TTL 長度、掃描節奏、進場窗口（相對 T）、是否跨多次結算持倉、退出觸發條件**需以 `/opsx:explore paper-trading-event-loop` 詳細評估。評估前本節數值（2 秒）僅為示意。
+每筆 Opportunity 只屬於一個結算場次（規格書 §26.4）；ARM（T-60s）重新讀取的費率最接近最終值，是最後的進場決策點。
 
 ---
 
@@ -454,7 +474,14 @@ Funding Event → Check Position → Check Eligibility → Calculate Funding
              → Settlement → Update Balance → Write Event
 ```
 
-📎 金額 = 結算時 `mark price × 持倉數量 × 已結算費率`（Q-04、Q-07）；Exchange Rule（結算偏差、持倉判定時點）由 Adapter 提供。
+📎 金額 = 結算時 `mark price × 持倉數量 × 已結算費率`（Q-04、Q-07）；Exchange Rule（結算偏差、持倉判定時點）由 Adapter 提供（規格書 §19.1）。
+
+### 23.1 入帳推定（✅ C-05 / D-6，`runtime/src/funding/`）
+
+- 不依賴私有帳戶資料：以公開端點出現 `fundingTime == T` 的**已結算費率**推定入帳（Binance `fundingRate`、Bybit `funding/history`）。
+- mark price：Binance 用已結算紀錄回傳的 `markPrice`（`mark_price_source = 'SETTLEMENT_RECORD'`）；Bybit 端點不含 mark price，用 MarketState 在 T 的快照（`'SNAPSHOT'`，快照缺失時金額標為估計值）。
+- 執行閘門：`entry_deadline` 後不得送新進場單；`hedged_by` 時未達 HEDGED → `LEG_IMBALANCE`；`[hedged_by, lock_end]` 禁止減倉；`exit_at` 即平倉、不等確認。
+- 狀態推進與損益定案見規格書 §18、§19.2；`settlement_confirm_timeout_ms`（預設 10 分鐘）後仍無已結算費率 → `MISSED`。
 
 ---
 
@@ -738,6 +765,27 @@ interface PaperTradingConfig {
     symbol_tier_overrides?: Record<string, Partial<PaperTradingConfig>>;  // 依波動度分級覆寫（§14.3）
 
     funding_alignment_tolerance_ms: number;  // ✅ C-10：預設 60000
+
+    // ✅ C-05：結算場次時間表（規格書 §26.4）
+    watch_lead_ms: number;                   // 預設 1_800_000（T-30m）
+    shortlist_lead_ms: number;               // 預設 300_000（T-5m）
+    arm_lead_ms: number;                     // 預設 60_000（T-60s）
+    entry_open_lead_ms: number;              // 預設 45_000（T-45s）
+    entry_buffer_ms: number;                 // 預設 5_000；entry_deadline = T − guard_before − partial_hedge_max_duration − entry_buffer
+    exit_buffer_ms: number;                  // 預設 15_000（E-2）；exit_at = lock_end + exit_buffer
+    min_funding_interval_hours: number;      // 預設 2（D-7）
+    settlement_confirm_timeout_ms: number;   // 預設 600_000；逾時 → MISSED
+
+    // ✅ C-05：Opportunity 失效（§10）
+    rate_change_tolerance: number;           // 預設 0.0002
+    price_change_tolerance_pct: number;      // 預設 0.001
+    opportunity_max_age_ms: number;
+
+    // ✅ C-05：時鐘（§8.1）
+    reference_clock_priority: ExchangeId[];  // 預設 ['Binance','Bybit','OKX']
+    clock_calibration_interval_ms: number;   // 預設 60_000
+    clock_jump_threshold_ms: number;         // 預設 100
+    clock_max_error_ms: number;              // 預設 500
     emergency_exit_timeout_ms: number;
     minimum_funding_spread_pct: number;
     minimum_expected_net_pnl_usdt: number;
@@ -808,6 +856,26 @@ Scanner → Opportunity Queue → Risk Engine → Execution Queue → Paper Exec
 
 Execution Events → Position Engine → PnL Engine → Event Store
 ```
+
+### 41.1 雙觸發來源 + 單一決策佇列（✅ C-05）
+
+```text
+  MarketState（行情事件，WS 推播）──┐
+                                   ├──▶ Decision Actor（所有事件排入同一佇列，依序處理）
+  Clock（時鐘事件，相對 T 排程）───┘        │
+                                            ├─ SessionManager（結算場次）
+                                            ├─ Opportunity 失效判斷
+                                            ├─ Funding 入帳推定
+                                            └─ Trade Manager / Risk / Execution
+```
+
+收益只在離散的 T 發生：行情決定「值不值得」，時鐘決定「能不能做」。會改變資金保留、場次、Trade 狀態的事件走同一佇列，消除競態；Node 單執行緒足夠。
+
+### 41.2 兩層資料取得（✅ C-05 / D-5）
+
+- **全市場層（WATCH）**：Binance 全市場推播；Bybit 批次 REST 每 N 秒；Pionex / Bitget / OKX 低頻 REST。
+- **入圍層（SHORTLIST → CONFIRM）**：只對入圍幣種訂閱逐筆 ticker 與盤口深度。
+- 理由：公開 API 無使用費，主要成本是限流 / IP 封鎖（BE-03 實測 429）、頻寬（Binance 全市場約 3–7 GB/天）、CPU（Bybit 全訂閱約 7,000 則/秒）與維護。實作屬 `websocket-data-layer`。
 
 ---
 
@@ -981,7 +1049,7 @@ Paper Execution：Binance Long / Bybit Short
         ↓
 Funding Event
         ↓
-自動退出（⚠️ 退出條件待 C-05 評估）
+自動退出：`exit_at`（預設 T+30s）平倉，不等入帳（✅ C-05，規格書 §19.2）
         ↓
 PnL
         ↓
@@ -1034,7 +1102,7 @@ Opportunity → Trade → TradeLeg → Order → Fill → Position → FundingSe
 | 2 | Instrument Registry | 否則配對到錯的合約、結算時間不對齊 | issue 方向 ①、Q-01～Q-03 |
 | 3 | 淨值口徑成本模型 | 否則 Expected Net PnL 系統性偏差 | issue 方向 ③、Q-04～Q-07 |
 | 4 | WebSocket 資料層 + 時鐘同步 | stale data 防護、盤口深度滑價 | issue 方向 ②、BE-04、BE-07 |
-| 5 | Paper Runtime（Schema → Execution → Position/Funding/PnL → Risk） | 本技術書主體；C-05、C-16 決議後才做對應部分 | 規格書全文 |
+| 5 | Paper Runtime（Schema → Execution → Position/Funding/PnL → Risk） | 本技術書主體；C-05 已決議（時鐘 / 場次 / 入帳規則已實作於 `runtime/src/`），C-16 決議後才做 Kill Switch | 規格書全文 |
 
 ---
 

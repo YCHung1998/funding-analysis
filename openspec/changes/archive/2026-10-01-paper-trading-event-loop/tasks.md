@@ -4,7 +4,7 @@
 ## 1. 文件
 
 - [x] 1.1 新增 `docs/REFERENCES.md`：收錄 design §8 的 6 份資金費率機制官方文件（URL、重點、已查證引述、未逐字核對標記、查證日期），並由 README / 規格書 §19 / 技術書 §23 連結 — 由 integrator 於 `integration/wave-1` 完成
-- [ ] 1.2 更新 `docs/TRADING_SYSTEM_SPEC.md`（C-05 改為已決議；§19 補結單規範與規則表；§26 補 Session 階段與中文名稱；§5 / §18 補 `funding_confirmed`、`mark_price_source`、公布延遲欄位；D-7 的 1 小時合約注意事項）與 `docs/PAPER_TRADING_TECH_SPEC.md`（§8 時鐘、§10 失效規則、§23 入帳推定、§38 新設定欄位、§41 雙觸發架構、D-5 兩層資料），HANDOFF §8 同步
+- [x] 1.2 更新 `docs/TRADING_SYSTEM_SPEC.md`（C-05 改為已決議；§19 補結單規範與規則表；§26 補 Session 階段與中文名稱；§5 / §18 補 `funding_confirmed`、`mark_price_source`、公布延遲欄位；D-7 的 1 小時合約注意事項）與 `docs/PAPER_TRADING_TECH_SPEC.md`（§8 時鐘、§10 失效規則、§23 入帳推定、§38 新設定欄位、§41 雙觸發架構、D-5 兩層資料），HANDOFF §8 同步
 
 ## 2. 時鐘（trading-clock）
 

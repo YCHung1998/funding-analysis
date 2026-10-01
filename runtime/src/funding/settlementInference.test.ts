@@ -100,8 +100,13 @@ describe('finalizeTradeResult (funding-settlement-rules spec "PnL finalization a
     expect(result).toEqual({ fundingConfirmed: true, finalizedAt: T + 50_000 });
   });
 
-  it('finalizes with funding_confirmed=false when a leg is MISSED or NOT_ELIGIBLE', () => {
+  it('finalizes with funding_confirmed=false when a leg is MISSED (amount unknown, manual review)', () => {
     const result = finalizeTradeResult(['SETTLED', 'MISSED'], T + 700_000);
     expect(result).toEqual({ fundingConfirmed: false, finalizedAt: T + 700_000 });
+  });
+
+  it('treats NOT_ELIGIBLE as confirmed: no funding for that leg is a known outcome (design Decision 6)', () => {
+    expect(finalizeTradeResult(['SETTLED', 'NOT_ELIGIBLE'], T + 50_000)).toEqual({ fundingConfirmed: true, finalizedAt: T + 50_000 });
+    expect(finalizeTradeResult(['NOT_ELIGIBLE', 'NOT_ELIGIBLE'], T + 50_000)).toEqual({ fundingConfirmed: true, finalizedAt: T + 50_000 });
   });
 });

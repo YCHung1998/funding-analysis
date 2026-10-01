@@ -65,3 +65,9 @@ A trade SHALL become `CLOSED` when both legs are flat, with `TradeResult.funding
 #### Scenario: Finalized when both settled
 - **WHEN** the second leg's settlement becomes SETTLED
 - **THEN** `funding_confirmed = true`, `net_pnl_usdt` includes both funding cashflows, and `finalized_at` is set
+
+#### Scenario: NOT_ELIGIBLE counts as confirmed, MISSED does not
+- **WHEN** both legs reach a terminal settlement status and one is `SETTLED` while the other is `NOT_ELIGIBLE` (definitively no funding for that leg)
+- **THEN** `funding_confirmed = true` and `finalized_at` is set
+- **WHEN** any leg is `MISSED` (settled rate never found)
+- **THEN** `funding_confirmed = false`, `finalized_at` is set, and the trade is flagged for manual review

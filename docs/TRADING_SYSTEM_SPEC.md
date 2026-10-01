@@ -2,7 +2,7 @@
 
 | 欄位 | 值 |
 |------|----|
-| Status | **Draft**（C-01～C-04、C-06～C-15、C-17、C-18 已決議；C-05、C-16、C-19 待決，見 [§34](#34-決策紀錄)） |
+| Status | **Draft**（C-01～C-15、C-17、C-18 已決議；C-16、C-19 待決，見 [§34](#34-決策紀錄)） |
 | Previous Version | v0.1 = 現有 7 模組研究 / Dry-run 規格（`src/spec/arbitrageSpecV01.ts`、`src/types/*.ts`）（C-02） |
 | Current Target | Paper Trading / Automated Simulation |
 | Scan Exchanges | Pionex、Binance、Bybit、Bitget、OKX（5 所全部持續掃描）（C-01） |
@@ -196,7 +196,7 @@ interface Opportunity {
     symbol: string;                  // Instrument Registry 的統一 ID，非字串去尾（Q-01）
 
     detected_at: number;             // §25 時間戳規則
-    expires_at: number;              // 技術書 §10 TTL
+    expires_at: number;              // 安全上限（opportunity_max_age_ms）；實際失效依技術書 §10 失效規則
     updated_at: number;
 
     long_exchange: ExchangeId;
@@ -636,6 +636,10 @@ interface FundingSettlement {
 
     settlement_status: 'EXPECTED' | 'ELIGIBLE' | 'SETTLED' | 'NOT_ELIGIBLE' | 'MISSED';
 
+    mark_price_source?: 'SETTLEMENT_RECORD' | 'SNAPSHOT';  // Binance 已結算紀錄含 markPrice；Bybit 用 T 時 MarketState 快照
+    settled_rate_published_at?: number;  // 公開端點出現已結算費率的時間
+    publication_delay_ms?: number;       // settled_rate_published_at − T（量測用，決定逾時與「待入帳」顯示）
+
     created_at: number;
     updated_at: number;
     settlement_timestamp?: number;
@@ -644,11 +648,11 @@ interface FundingSettlement {
 
 | settlement_status | 中文 |
 |-------------------|------|
-| `EXPECTED` | 預期中（尚未到結算時刻） |
-| `ELIGIBLE` | 符合資格（結算時刻持有部位） |
-| `SETTLED` | 已結算 |
-| `NOT_ELIGIBLE` | 不符資格（結算時刻未持倉） |
-| `MISSED` | 錯過（應結算但未取得結算結果） |
+| `EXPECTED` | 預期中：ARM 時建立（預測費率 × 預估名目） |
+| `ELIGIBLE` | 符合資格：`lock_end` 時確認該腿在鎖定區間內全程持倉 |
+| `SETTLED` | 已結算：公開端點出現 `fundingTime == T` 的已結算費率；金額 = 結算時 mark price × 持倉數量 × 已結算費率 |
+| `NOT_ELIGIBLE` | 不符資格：鎖定區間內任一時刻未持倉（例如緊急平倉）；確定這一期沒有資金費 |
+| `MISSED` | 錯過：超過 `settlement_confirm_timeout_ms`（預設 10 分鐘）仍查不到已結算費率，需人工檢查 |
 
 ---
 
@@ -662,7 +666,29 @@ Position Open Time → Funding Timestamp → Position Eligibility → Funding Se
 
 不能只看到 Funding Time 就直接產生收益。**各交易所的 settlement 規則由 Exchange Adapter 定義**（Invariant #3）。
 
-📎 Binance 官方 FAQ「結算時刻持倉才計費」「實際劃轉有 15 秒偏差」已查證；Bybit 規則**未查證**，實作 Bybit adapter 時必須先查證。
+📎 Binance 官方 FAQ「實際劃轉有 15 秒偏差」、Bybit「結算前後 5 秒內開平倉不保證計入」皆已查證（[`REFERENCES.md`](REFERENCES.md)）。
+
+### 19.1 交易所結算規則表（✅ C-05，由 Adapter 提供，策略層無分支）
+
+| 交易所 | 不確定區間（前 / 後） | 已結算費率來源（公開） | 週期來源 |
+|--------|---------------------|----------------------|---------|
+| Binance | 15s / 15s（官方未說方向，保守取雙向） | `GET /fapi/v1/fundingRate`（含 `fundingTime`、`fundingRate`、`markPrice`） | `GET /fapi/v1/fundingInfo`，缺值 = 8h（Binance 文件定義的預設） |
+| Bybit | 5s / 5s | `GET /v5/market/funding/history`（無 mark price） | instruments-info `fundingInterval` / tickers |
+| OKX（未來） | 0s / 60s（「fee assessment may take up to a minute」） | `settFundingRate` / funding-rate-history | `nextFundingTime − fundingTime` |
+
+配對的保護區間 = 兩腿不確定區間的最大值；加入 OKX 後含 OKX 的配對 `exit_at` 自動變成 T+75s，不需改策略。
+
+### 19.2 結單規範：安心平倉 vs 正式入帳（✅ C-05 / E-1、E-2）
+
+- **安心平倉（時間條件）**：兩腿在 `[T − guard_before, T + guard_after]` 全程持倉，這一期的收付權利即已確定，平倉早晚不影響結果。因此到 `exit_at`（預設 T+30s）即送出平倉單，**不等待入帳確認**——等待只增加持倉風險，不增加收益。
+- **正式入帳（確認條件）**：依 §18 `settlement_status` 推進；`EXPECTED → ELIGIBLE → SETTLED / NOT_ELIGIBLE / MISSED`。
+- **損益定案**：Trade 在部位歸零時轉 `CLOSED`，此時 `TradeResult.funding_confirmed = false`（UI：「已平倉 · 待入帳」）；兩腿都到達終態後寫入 `finalized_at`。`funding_confirmed = true` 的條件是每一腿都是 `SETTLED` 或 `NOT_ELIGIBLE`（金額已知）；任一腿 `MISSED` → `funding_confirmed = false` 並標記人工檢查。UI 標示「推定結算（依公開已結算費率）」。
+- **量測**：每次記錄 `publication_delay_ms`，供調整逾時與進入 Live 前評估是否改為「等確認才平倉」。
+
+### 19.3 合約週期限制（✅ C-05 / D-7）
+
+- 只交易週期 **≥ 2 小時**的合約；同一幣種相鄰場次因此不會重疊（WATCH 30 分鐘 < 2 小時）。
+- ⚠️ **1 小時合約注意**：Bybit / OKX 在費率觸及上下限時會**自動把結算頻率改為每小時**。ARM 與 `hedged_by` 前各重新讀取一次週期；任一腿變成 < 2h 或兩腿結算時間不再對齊 → Opportunity `REJECTED` / 進入緊急處理。
 
 ---
 
@@ -727,7 +753,8 @@ interface TradeResult {
     final_status: 'PROFIT' | 'LOSS' | 'BREAK_EVEN' | 'ABORTED' | 'FAILED' | 'EMERGENCY_EXIT';
     result_reason: string;
 
-    finalized_at: number;
+    funding_confirmed: boolean;            // ✅ C-05：兩腿皆 SETTLED / NOT_ELIGIBLE 才為 true（§19.2）
+    finalized_at?: number;                 // 兩腿結算皆到達終態後才寫入（平倉當下為空 =「待入帳」）
 }
 ```
 
@@ -873,6 +900,32 @@ CREATED ──► PRE_FLIGHT ──► ENTRY_PENDING ──► HEDGED ──► 
 
 ---
 
+### 26.4 Settlement Session Phase（✅ C-05）
+
+每個候選結算時刻 T 一個場次；時間點由技術書 §38 設定與 §19.1 規則表計算，每腿以自己交易所的時鐘換算後取保守值（技術書 §8.1）。
+
+```text
+ T-30m        T-5m        T-60s   T-45s        T-25s   T-15s     T      T+15s  T+30s
+   │            │           │       │            │       │       │        │      │
+ WATCH ──▶ SHORTLIST ──▶ ARM ──▶ ENTRY ─────────────▶ LOCK ─────────────▶ CONFIRM ──▶ DONE
+                                    │  最後送單 ─┘       │  禁止減倉       │  平倉
+                                    │                   └ 必須已 HEDGED    └ 不等入帳
+（任一階段無合格機會 / 被否決 → SKIPPED）
+```
+
+| 狀態 | 中文 | 定義 |
+|------|------|------|
+| `WATCH` | 觀察中 | T-30m 起，全市場層追蹤候選 |
+| `SHORTLIST` | 入圍 | T-5m，入圍幣種改訂閱逐筆行情與盤口，強制校正時鐘 |
+| `ARM` | 備戰 | T-60s，重新讀取兩腿費率與週期、重算淨值、保留資金；最後的進場決策點 |
+| `ENTRY` | 進場中 | `entry_open`～`entry_deadline`（預設 T-45s～T-25s）可送出新進場單 |
+| `LOCK` | 鎖定 | `hedged_by`～`lock_end`（預設 T-15s～T+15s）禁止減倉；`hedged_by` 時未 HEDGED → `LEG_IMBALANCE` |
+| `CONFIRM` | 平倉與入帳確認 | `exit_at`（預設 T+30s）送出平倉單，之後等待已結算費率 |
+| `DONE` | 完成 | 入帳定案（§19.2）後由 Trade 層標記 |
+| `SKIPPED` | 跳過 | 本場次沒有合格機會或被否決 |
+
+每次轉換產生 `SESSION_PHASE_CHANGED` 事件（§25）。
+
 ## 27. Frontend Required Information
 
 **Account**：Total Capital、Available Capital、Allocated Capital、Current Positions、Maximum Positions。
@@ -1001,7 +1054,7 @@ Paper Trading 需要各交易所的 API Key / Secret（用途：取得帳戶實�
 | C-02 | 版本號 | ✅ 現有 7 模組規格改稱 v0.1，本文件為 v0.2 |
 | C-03 | 模組切分 | ✅ 在主要功能不變下採用新切分（§2）；因變動較大，改用 `main` / `develop` / `feature-*` 分支流程與 rollback 機制（技術書 §51） |
 | C-04 | 階段定義 | ✅ 五階段（§1.1） |
-| C-05 | 進出場時機與事件迴圈 | ⚠️ **部分決議**：資料層朝 WebSocket 事件驅動確定。進出場時機（相對 T 的進場窗口、是否跨多次結算持倉、退出觸發條件）、掃描節奏與 Opportunity TTL 的關係 → **需要更詳細的評估**，以 `/opsx:explore paper-trading-event-loop` 進行，評估完成前不得實作 Trade Manager 的進出場邏輯 |
+| C-05 | 進出場時機與事件迴圈 | ✅ **2026-10-01 決議**（OpenSpec change `paper-trading-event-loop`，D-1～D-8、E-1、E-2）：每筆 Trade 只做**單次結算**；以「結算場次」錨定 T（WATCH → SHORTLIST → ARM → ENTRY → LOCK → CONFIRM，窗口可設定）；Opportunity 改以失效規則取代固定 TTL；兩層資料取得（全市場 / 入圍）；入帳以公開已結算費率推定；只交易週期 ≥ 2h 的合約；時鐘可注入且每腿以自己交易所的時鐘判定；`exit_at` 即平倉、不等入帳（預設 T+30s）。細節見 §18、§19、§26.4、技術書 §8.1、§10、§23.1、§41 |
 | C-06 | Runtime 位置 | ✅ 獨立 Node process；`server.ts` 只讀 SQLite / 轉發事件（技術書 §3） |
 | C-07 | 目錄結構 | ✅ 與研究原型分開，採技術書 §4 架構放在 `runtime/`；未來有需求再調整 |
 | C-08 | 憑證 | ✅ Paper 需要 API Key / Secret，放 `.env.local`、不得上傳（§33） |

@@ -100,6 +100,7 @@ export function finalizeTradeResult(legStatuses: FundingSettlementStatus[], now:
   const allTerminal = legStatuses.every((status) => TERMINAL_STATUSES.includes(status));
   if (!allTerminal) return { fundingConfirmed: false, finalizedAt: null };
 
-  const allSettled = legStatuses.every((status) => status === 'SETTLED');
-  return { fundingConfirmed: allSettled, finalizedAt: now };
+  // NOT_ELIGIBLE is a known outcome (no funding for that leg); only MISSED leaves the amount unknown.
+  const allKnown = legStatuses.every((status) => status === 'SETTLED' || status === 'NOT_ELIGIBLE');
+  return { fundingConfirmed: allKnown, finalizedAt: now };
 }
