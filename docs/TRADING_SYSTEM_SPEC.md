@@ -195,6 +195,7 @@ interface Opportunity {
     opportunity_id: string;
     symbol: string;                  // Instrument Registry 的統一 ID，非字串去尾（Q-01）
 
+    created_at: number;              // §25 #1；建立時 = detected_at
     detected_at: number;             // §25 時間戳規則
     expires_at: number;              // 安全上限（opportunity_max_age_ms）；實際失效依技術書 §10 失效規則
     updated_at: number;
@@ -456,6 +457,8 @@ interface Fill {
     exchange: ExchangeId;
     timestamp: number;               // 成交時間（模擬撮合時間）
     recorded_at: number;             // 寫入時間
+    created_at: number;              // §25 #1；= recorded_at（Fill 不可變）
+    updated_at: number;              // = recorded_at
 
     quantity: number;
     price: number;
@@ -676,7 +679,7 @@ Position Open Time → Funding Timestamp → Position Eligibility → Funding Se
 | Bybit | 5s / 5s | `GET /v5/market/funding/history`（無 mark price） | instruments-info `fundingInterval` / tickers |
 | OKX（未來） | 0s / 60s（「fee assessment may take up to a minute」） | `settFundingRate` / funding-rate-history | `nextFundingTime − fundingTime` |
 
-配對的保護區間 = 兩腿不確定區間的最大值；加入 OKX 後含 OKX 的配對 `exit_at` 自動變成 T+75s，不需改策略。
+配對的保護區間 = 兩腿不確定區間的最大值；實際換算時每腿用**自己交易所的區間、在自己交易所的時鐘上**計算，再取保守值（T 之前取最早、T 之後取最晚；2026-10-01 決議）。例：Binance × Bybit 的 `hedged_by` = min(Binance 時鐘 T−15s, Bybit 時鐘 T−5s)，實際即 T−15s。加入 OKX 後含 OKX 的配對 `exit_at` 自動變成 T+75s，不需改策略。
 
 ### 19.2 結單規範：安心平倉 vs 正式入帳（✅ C-05 / E-1、E-2）
 
@@ -725,6 +728,9 @@ interface TradeResult {
     trade_id: string;
     symbol: string;
     mode: 'PAPER' | 'BACKTEST';
+
+    created_at: number;                    // §25 #1；Trade 進入終態時建立（暫定結果）
+    updated_at: number;                    // 每次結算更新時重寫
 
     long_exchange: ExchangeId;
     short_exchange: ExchangeId;
@@ -897,6 +903,17 @@ CREATED ──► PRE_FLIGHT ──► ENTRY_PENDING ──► HEDGED ──► 
 | `CLOSING` | 平倉中 | 平倉單已送出 |
 | `CLOSED` | 已平倉 | 部位歸零 |
 | `FAILED` | 失敗 | 未能開倉（0 成交）或無法平倉 |
+
+```text
+PENDING ──► OPENING ──────────► OPEN ──► CLOSING ──► CLOSED
+   │           │                 ▲          ▲  └────► FAILED（無法平倉）
+   │           ├──► PARTIAL ─────┘          │
+   │           │       └────────────────────┘（部分成交後緊急平倉）
+   │           └──► FAILED（0 成交）
+   └──► FAILED（未送單即放棄）
+```
+
+✅ 2026-10-01 決議：允許的轉換為 `PENDING→OPENING|FAILED`、`OPENING→PARTIAL|OPEN|FAILED`、`PARTIAL→OPEN|CLOSING`、`OPEN→CLOSING`、`CLOSING→CLOSED|FAILED`（`runtime/src/types/status.ts` `LEG_TRANSITIONS`）。
 
 ---
 

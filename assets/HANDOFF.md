@@ -180,6 +180,17 @@ B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run che
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
 
+### 2026-10-01（3）— Claude (Opus 5.5)
+- **做了什麼**：C-05 回寫規格書 / 技術書並 archive `paper-trading-event-loop`；依使用者決議處理第一波待決事項：
+  - 結算保護區間：每腿用自己交易所的區間、在自己時鐘上換算後取保守值（settlement-session spec 敘述改為與實作一致）。
+  - `funding_confirmed`：`SETTLED` / `NOT_ELIGIBLE` 視為已確認、`MISSED` 未確認（原實作把 `NOT_ELIGIBLE` 當未確認，與 design 不符，已修正）。
+  - trading-schema 7 題：補欄位回寫規格書（Opportunity / Fill / TradeResult 時間戳、`TradingEvent` 欄位）、Leg 轉換圖、事件擴充碼列入技術書 §26、adapter 帳戶型別改名 `ExchangeAccountInfo`、術語表加 `SESSION` / `HEALTH`；`PaperPosition` 計算語意留給 `position-funding-pnl`。
+  - 費率防呆門檻：使用者決議 **10%**（原提案 5%），`|rate| > 0.10` 才判定為百分比誤存。
+- **驗證證據**：`NOT_ELIGIBLE` 與 10% 門檻皆先寫失敗測試再修正；`npm run check` 全綠；`openspec validate --all --strict` 15/15。
+- **沒做完 / 已知問題**：B18（event-loop 剩餘本地事件型別）；ARCHITECTURE 圖重產延到最後一輪。
+- **下一步建議**：使用者 review 後再開第 1b 波（`paper-trading-ui`、`risk-engine-kill-switch` 第 1–3 組）。
+- **需要使用者決定的事**：C-16、C-19（仍待決）。
+
 ### 2026-10-01（2）— Claude (Opus 5.5) 整合 + 3 個 Sonnet agent（第一波）
 - **做了什麼**：三個 change 並行開發後由 integrator 合併（分支 `integration/wave-1`）：
   - `trading-schema-types`：`runtime/src/types/` 成為 v0.2 Schema 單一來源（ids、5 張狀態轉換表、Opportunity / Trade / Order / Fill / Funding / Result / Risk / Account、`TradingEvent` 含 instrument-registry 與 event-loop 擴充碼、`assertNoCredentials` / `validateEntity`、`glossary.ts`）；六個舊型別 `@deprecated`、`src/types/legacy/`；`RiskStatusReport` 改由 runtime re-export。
@@ -189,7 +200,7 @@ B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run che
 - **驗證證據**：`npm run check` 全綠（48 檔 / 293 測試）；`openspec validate --all --strict` 12/12；各 change 皆有紅燈→綠燈證據（agent 回報 + integrator 獨立重跑）。live-scan（抽出前 805 組 / 過門檻 12 → 現在 714 組 / 6；五所皆 OK；Bitget 出現在 325–412 組最佳配對；所有候選兩腿結算時間差 0 ms）；`live-klines?symbol=1000PEPEUSDT` → `PEPE_USDT_PERP`；非法 symbol → 400。
 - **沒做完 / 已知問題**：event-loop task 1.2（規格書 / 技術書段落回寫）未做；B18（event-loop 剩餘本地事件型別）；`price_mismatch_tolerance_pct`（2%）與 `funding_alignment_tolerance_ms`（60s）寫死在 `server.ts`，尚未設定化；Pionex / Bitget 尚無結算規則表（`requireVenueRule` 會 throw）。
 - **下一步建議**：第 1b 波 `paper-trading-ui`、`risk-engine-kill-switch`（第 1–3 組）；第二波 `net-cost-model`、`trading-event-store`、`websocket-data-layer`。
-- **需要使用者決定的事**：event-loop 的兩處 spec 解讀（結算保護區間採「每腿各自換算再取保守值」；一腿 SETTLED、一腿 MISSED 時 `funding_confirmed = false`）；`trading-schema-types` design 的 7 項 Open Questions 與自行補的術語 / 欄位型別（需回寫規格書）。
+- **需要使用者決定的事**：~~event-loop 兩處 spec 解讀、trading-schema 7 項 Open Questions~~ ✅ 已於 2026-10-01（3）決議。
 
 ### 2026-10-01 — Claude (Opus 5.5)
 - **做了什麼**：B0 / P13（OpenSpec change `setup-vitest`，分支 `feature-setup-vitest`，自 `47c6df0` 分出——`develop` 當時尚未含 proposal）。導入 `vitest@5.0.3` + `@vitest/coverage-v8@5.0.3`（peer 支援 vite 8，Open Question 1 不需退回 4.x）；`vitest.config.ts` / `vitest.setup.ts`（fetch 替身拋錯）；scripts `test`、`test:watch`、`test:coverage`、`check`。特性測試 11 檔：`arbitrageEngine`、`funnelScanner`、`dryRunEngine`、6 個 adapter、`server/liveScanMath`、`test/infrastructure`；已知 bug 以 `[Q-01] [Q-02] [Q-05] [Q-06] [Q-08] [P1] [P2] [P4] [P6] [P7]` 標註「現況」。`server.ts` 的 `extractBaseSymbol`、最佳配對、結算時間彙整、Expected Net PnL 逐字搬到 `server/liveScanMath.ts`。

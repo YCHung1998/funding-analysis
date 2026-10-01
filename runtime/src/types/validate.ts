@@ -73,7 +73,8 @@ export type EntityKind =
 
 const EPOCH_MS_FLOOR = 1_000_000_000_000; // ~2001-09-09, well before any real data this system handles
 const RATE_FIELD_PATTERN = /(^|_)(funding_rate|settled_funding_rate)$/;
-const MAX_ABS_RATE = 0.05;
+// |rate| > 10% 視為百分比誤存（Invariant #5）；使用者 2026-10-01 決議以 10% 保守放寬（原提案 5%）。
+const MAX_ABS_RATE = 0.1;
 const QUANTITY_TOLERANCE = 1e-9;
 
 type AnyRecord = Record<string, unknown>;

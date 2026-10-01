@@ -151,7 +151,7 @@ interface ExchangeAdapter {
     getFundingRate(symbol: string): Promise<FundingRate>;
     getOrderBook(symbol: string, depth: number): Promise<OrderBook>;
     getTicker(symbol: string): Promise<Ticker>;
-    getAccount(): Promise<AccountSnapshot>;      // ✅ C-08：唯讀私有端點，僅用於手續費等級 / 限流額度 / 權限檢查
+    getAccount(): Promise<ExchangeAccountInfo>;  // ✅ C-08：唯讀私有端點，僅用於手續費等級 / 限流額度 / 權限檢查（2026-10-01 改名，避免與 §29 虛擬帳本 AccountSnapshot 撞名）
 }
 ```
 
@@ -530,6 +530,24 @@ RECONCILIATION_ERROR     STALE_MARKET_DATA        EXCHANGE_DISCONNECTED
 KILL_SWITCH_*（待 C-16）
 ```
 
+擴充碼（✅ 2026-10-01 決議；程式單一來源 `runtime/src/types/event.ts` `TRADING_EVENT_TYPES`，中文定義見 `glossary.ts`）：
+
+```text
+# 狀態轉換 / 資金（trading-schema）
+LEG_STATUS_CHANGED       FUNDING_STATUS_CHANGED
+CAPITAL_RESERVED         CAPITAL_RELEASED
+ENTRY_HALT_REQUESTED     ENTRY_HALT_CLEARED
+RUNTIME_STARTUP_STEP     RUNTIME_ARMED            RUNTIME_DISARMED
+# 時鐘 / 結算場次（paper-trading-event-loop）
+SESSION_PHASE_CHANGED    CLOCK_REFERENCE_CHANGED  CLOCK_OFFSET_JUMP
+# 合約註冊表（instrument-registry）
+INSTRUMENT_LISTED        INSTRUMENT_STATUS_CHANGED       INSTRUMENT_SPEC_CHANGED
+FUNDING_SCHEDULE_CHANGED INSTRUMENT_AMBIGUOUS            INSTRUMENT_UNKNOWN_VALUE
+INSTRUMENT_SOURCE_STATUS_CHANGED
+```
+
+新增事件碼時必須同時加入 `TRADING_EVENT_TYPES` 與 `glossary.ts`（`glossary.test.ts` 檢查完整性）。
+
 ✅ C-11 / 規格書 §25：**每一次狀態轉換都必須有對應事件**；`TRADE_STATUS_CHANGED` 的 payload 含 `from`、`to`、`reason`。
 
 這些事件**不要只寫成 Log**，應該是 **可查詢的正式交易資料**。
@@ -543,15 +561,18 @@ interface TradingEvent {
     event_id: string;
     event_type: TradingEventType;
     timestamp: number;
-    trade_id: string;
+    trade_id: string | null;            // 市場層 / 場次 / 時鐘 / 註冊表事件為 null（NO_TRADE_EVENT_TYPES）
     leg_id?: string;
     order_id?: string;
     position_id?: string;
+    opportunity_id?: string;
+    session_id?: string;                // 結算場次（規格書 §26.4）
     exchange?: ExchangeId;
     symbol?: string;
     payload: Record<string, unknown>;   // 不得包含任何 API 憑證（Invariant #2）
     recorded_at: number;                // 寫入時間（≠ timestamp 事件時間，規格書 §25）
     clock_offset_ms?: number;           // 當下本機與交易所的時鐘偏差
+    clock_reference?: ExchangeId;       // 當下的參考時間軸交易所（§8.1）
 }
 ```
 
@@ -564,7 +585,7 @@ interface GlossaryEntry {
     code: string;          // 'PARTIALLY_HEDGED'
     zh: string;            // '部分對沖'
     definition_zh: string; // '兩腿都有成交，hedge ratio 介於兩門檻之間，正在補足'
-    category: 'OPPORTUNITY' | 'TRADE' | 'LEG' | 'ORDER' | 'FUNDING' | 'EVENT';
+    category: 'OPPORTUNITY' | 'TRADE' | 'LEG' | 'ORDER' | 'FUNDING' | 'EVENT' | 'SESSION' | 'HEALTH';  // SESSION / HEALTH：2026-10-01 決議加入
 }
 ```
 

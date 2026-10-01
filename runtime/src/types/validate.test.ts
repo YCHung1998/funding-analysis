@@ -186,6 +186,32 @@ describe('validateEntity: percent-not-decimal (Invariant #5)', () => {
     });
     expect(errs).toContain('RATE_NOT_DECIMAL:long_funding_rate');
   });
+
+  // 門檻 10%（使用者 2026-10-01 決議，保守放寬）：|rate| ≤ 0.10 視為小數，> 0.10 視為百分比誤存。
+  function opportunityWithRate(rate: number) {
+    return validateEntity('Opportunity', {
+      opportunity_id: 'o1', symbol: 'BTCUSDT',
+      created_at: 1_700_000_000_000, detected_at: 1_700_000_000_000, expires_at: 1_700_000_060_000, updated_at: 1_700_000_000_000,
+      long_exchange: 'Binance', short_exchange: 'Bybit',
+      long_funding_rate: rate, short_funding_rate: 0.0001, funding_spread: 0,
+      long_funding_time: 1_700_000_100_000, short_funding_time: 1_700_000_100_000,
+      long_funding_interval_hours: 8, short_funding_interval_hours: 8, funding_time_diff_ms: 0, funding_aligned: true,
+      long_price: 1, short_price: 1, price_difference_pct: 0, estimated_fee_pct: 0, estimated_slippage_pct: 0,
+      estimated_funding_pnl: 0, estimated_net_pnl: 0, liquidity_score: 1, strategy_version: 'v1', status: 'DETECTED',
+    });
+  }
+
+  it('accepts rates up to and including 0.10 (10%)', () => {
+    for (const rate of [0.08, 0.1, -0.1]) {
+      expect(opportunityWithRate(rate)).not.toContain('RATE_NOT_DECIMAL:long_funding_rate');
+    }
+  });
+
+  it('rejects rates above 0.10', () => {
+    for (const rate of [0.1001, -0.11]) {
+      expect(opportunityWithRate(rate)).toContain('RATE_NOT_DECIMAL:long_funding_rate');
+    }
+  });
 });
 
 describe('validateEntity: TradeResult funding finalization', () => {
