@@ -50,4 +50,42 @@ describe('TimerQueue', () => {
 
     expect(fired).toEqual([100, 300]);
   });
+
+  it('fires a timer scheduled during the batch if its due time is still <= target (regression)', () => {
+    const q = new TimerQueue();
+    const fired: string[] = [];
+    q.schedule(100, () => {
+      fired.push('A');
+      q.schedule(150, () => fired.push('B'));
+    });
+
+    q.fireDueBy(300);
+
+    expect(fired).toEqual(['A', 'B']);
+  });
+
+  it('reports each callback its own due time via the onBeforeFire hook, not the final target (regression)', () => {
+    const q = new TimerQueue();
+    const seenDueAt: number[] = [];
+    q.schedule(100, () => {});
+    q.schedule(300, () => {});
+
+    q.fireDueBy(300, (dueAt) => seenDueAt.push(dueAt));
+
+    expect(seenDueAt).toEqual([100, 300]);
+  });
+
+  it('a callback can cancel a later-but-already-due entry in the same batch', () => {
+    const q = new TimerQueue();
+    const fired: string[] = [];
+    const laterHandle = q.schedule(200, () => fired.push('B'));
+    q.schedule(100, () => {
+      fired.push('A');
+      q.cancel(laterHandle);
+    });
+
+    q.fireDueBy(300);
+
+    expect(fired).toEqual(['A']);
+  });
 });

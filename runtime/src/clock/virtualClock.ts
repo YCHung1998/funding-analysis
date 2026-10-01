@@ -109,15 +109,19 @@ export class VirtualClock implements Clock {
     this.queue.cancel(handle);
   }
 
-  /** Advance the clock to `t`, firing every callback due at or before `t` in order. */
+  /**
+   * Advance the clock to `t`, firing every callback due at or before `t` in order. Each
+   * callback observes `now()` equal to its own due time (not `t`) while it runs — only once
+   * every due callback has fired does `now()` move to `t` itself.
+   */
   advanceTo(t: number): void {
     if (t < this.currentTime) {
       throw new Error(`VirtualClock cannot move backwards: now=${this.currentTime}, target=${t}`);
     }
-    // Set `now()` to the target before firing so callbacks observe the post-advance time,
-    // then recompute reference staleness as time passes.
+    this.queue.fireDueBy(t, (dueAt) => {
+      this.currentTime = dueAt;
+    });
     this.currentTime = t;
-    this.queue.fireDueBy(t);
     this.recomputeReference();
   }
 

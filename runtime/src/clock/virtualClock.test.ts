@@ -21,6 +21,30 @@ describe('VirtualClock — deterministic replay (trading-clock spec)', () => {
     expect(nowInsideLast).toBe(300);
   });
 
+  it('now() inside an earlier callback reflects that callback\'s own due time, not the advance target (regression)', () => {
+    const clock = new VirtualClock(0);
+    const seen: number[] = [];
+    clock.at(100, () => seen.push(clock.now()));
+    clock.at(300, () => seen.push(clock.now()));
+
+    clock.advanceTo(300);
+
+    expect(seen).toEqual([100, 300]);
+  });
+
+  it('a callback firing at t can schedule a new timer due at or before the advance target and have it fire in the same advanceTo (regression)', () => {
+    const clock = new VirtualClock(0);
+    const fired: string[] = [];
+    clock.at(100, () => {
+      fired.push('A');
+      clock.at(150, () => fired.push('B'));
+    });
+
+    clock.advanceTo(300);
+
+    expect(fired).toEqual(['A', 'B']);
+  });
+
   it('keeps registration order for the same due time', () => {
     const clock = new VirtualClock(0);
     const order: string[] = [];
