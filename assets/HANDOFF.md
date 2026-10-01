@@ -183,6 +183,26 @@ B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run che
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
 
+### 2026-10-01（5）— Claude Sonnet 5（`trading-event-store`，分支 `feature-trading-event-store`）
+- **做了什麼**：實作 OpenSpec change `trading-event-store`（capability `event-store`）tasks 1.1–5.1 全部完成：
+  - 基礎：`runtime/src/storage/driver.ts`（`SqliteDriver` 介面 + `NodeSqliteDriver`，`node:sqlite` `DatabaseSync`，WAL + `foreign_keys=ON`，`transaction(fn)` 可重入（巢狀呼叫併入外層交易，只有最外層 BEGIN/COMMIT/ROLLBACK）、拒絕 async callback、`backupTo` 用 `VACUUM INTO`）；`runtime/src/storage/migrate.ts`（`migrate`/`rollback`/`currentVersion`，`schema_migrations` 表，每檔一 transaction）；`runtime/src/storage/backup.ts`（啟動前備份，UTC 檔名格式、`PRAGMA integrity_check`、同毫秒加 `-1`/`-2` 後綴、失敗丟 `BackupFailedError` 拒絕啟動、新安裝不備份）。`package.json` 加 `engines.node >=22.13`；`.gitignore` 加 `data/`。
+  - 資料表與 Repository：`runtime/src/storage/migrations/001_initial.ts`（技術書 §29 全部 13 張表、§30 外鍵、索引、`trading_events` append-only 觸發器 UPDATE/DELETE 皆擋）；`rowMapping.ts` + `tradeRepository.ts`（opportunities/trades+legs/risk_checks）、`orderRepository.ts`（orders/fills/positions/funding_settlements）、`accountRepository.ts`（account_snapshots/pnl_snapshots）、`marketDataRepository.ts`（market_events/funding_rates，只建表+round trip，不寫內容）；全部無 delete 方法（測試斷言）。
+  - Event Store：`eventStore.ts`——`EventStore.append`（本地事件驗證 + `assertNoCredentials`、`seq` 由 autoincrement、`recorded_at` 由注入 Clock 產生、與 `timestamp` 分開）；`replay({trade_id?,from_seq?,to_seq?})`；`rebuildProjections(targetDb)`（依 event_type 分派到對應 repository，用 `payload.after`/`payload.snapshot`/`payload.fill`），以技術書 §43 完整成功交易（2 腿、2 ACK、2 Fill、對沖、資金費、2 Exit Fill、Position 關閉）與 §44 未成交交易（ABORTED/ENTRY_TIMEOUT）兩個驗收情境驗證「重建列 = 原列」。
+  - 寫入架構：`runtime/src/telemetry/eventQueue.ts`（`EventQueue`：`publish` 只做緩衝 push 不呼叫任何 consumer，三條獨立排程鏈——DB 批次 flush + 指數退避重試（100ms→5s）、UI/Analytics 共用 tick；overflow 只標記旗標不丟 DB 事件；UI buffer 滿丟最舊 + 計數；`getStatus()`/`drain()`）；`runtime/src/storage/ledger.ts`（`Ledger`：`reserveCapitalAndCreateTrade`/`releaseCapital`/`applyOrderTransition`/`applyFill` 皆單一 DB transaction 內寫實體列 + 事件；`INSUFFICIENT_CAPITAL` 不寫任何東西；事件只傳給注入的 `publishToUi` callback，結構上不可能被 `EventQueue`/`DatabaseWriter` 重寫）；`runtime/test/helpers/assertTraceability.ts`（缺 `created_at`/`updated_at`、狀態與最後事件 `payload.to`/`payload.after[status]` 不符、缺轉換事件、同一 trade 事件時間隨 seq 遞減，四項檢查皆有正反例測試）。
+  - 全程 fail-then-pass：每個檔案先寫測試確認因模組不存在而失敗，再實作到通過；過程中發現 `transaction(fn)` 需要可重入（repository 自身的 `saveTrade` 用了 transaction，`Ledger` 外層又包一層）才補上巢狀交易測試與實作。
+- **驗證證據**：`npm run lint`（`tsc --noEmit`）通過；`npm run build`（vite build）通過；`npm test`（`vitest run`）**97 個測試檔、947 個測試全過**（含既有 850 個 + 本次新增 97 個）；`npx openspec validate trading-event-store --strict` → `Change 'trading-event-store' is valid`；`npm run check` 整體綠燈。分支 `feature-trading-event-store`，起點 commit `f46ab96`。
+- **沒做完 / 已知問題**：
+  - design.md Open Questions 1–4（備份保留策略、orders/fills 同步寫入是否回寫技術書 §35、DB 路徑 `data/runtime.sqlite`、overflow 行為）**待定**——本 change 依 design.md 既定決策實作（全部保留備份、orders/fills 同步、路徑可由設定覆寫但未接 config 層、overflow 標記但不丟 DB 事件），尚未經使用者書面批准，需持續提醒。
+  - 尚未接上任何啟動流程（無 `main`/`server.ts` 呼叫 `backupBeforeStartup`/`migrate`/建立 `EventQueue`/`Ledger` 實例）——此 change 的範圍只到 storage/event-store/ledger 本身，實際啟動組裝屬後續 change（`paper-execution-engine`/`runtime-health-reconciliation`）。
+  - `rebuildProjections` 的 event_type → projection 對應表是本次新設計（design.md 未逐一列出 dispatch 規則），`RISK_CHECK_*`/`LEG_STATUS_CHANGED`/`FUNDING_SETTLED` 等分支僅有基本測試覆蓋（§43/§44 驗收情境未涵蓋 LEG_STATUS_CHANGED 與 RISK_CHECK_* 的 payload.after 路徑），下游若發現欄位缺漏需回來補。
+  - `assertTraceability` 對 `funding_settlements` 的事件比對用 `trade_id` 分組（非 `funding_id`），同一 trade 有多筆 funding_settlements 時可能誤判；目前無測試涵蓋此邊界，留給下游（`position-funding-pnl`）發現時修正。
+  - 後端（啟動流程、`server.ts` 讀取 API、前端事件推送）完全未接上，不可 archive（依使用者既定政策：後端未接上不 archive）。
+- **下一步建議**：
+  1. `paper-execution-engine`：組裝啟動序列（`backupBeforeStartup` → `migrate` → 建立 `EventStore`/`EventQueue`/`Ledger` 單例），把 risk-engine-kill-switch 的 Order/Fill/Position 寫入改走 `Ledger`。
+  2. 請使用者就 design.md Open Questions 1–4 做出決定並寫回 design.md / 技術書 §35 註記。
+  3. `runtime-health-reconciliation` 可直接消費 `EventQueue.getStatus()`（Database 健康狀態）與 `assertTraceability`（重啟恢復檢查）。
+- **需要使用者決定的事**：design.md Open Questions 1–4（備份保留策略、orders/fills 同步寫入是否回寫技術書 §35、DB 路徑設定方式、overflow 行為）——沿用 design.md 既定決策實作，但尚未經使用者書面確認，請在下次 review 時明確回覆或指出需調整處。
+
 ### 2026-10-01（4）— Claude (Opus 5.5) 整合 + 2 個 Sonnet agent（第 1b 波）
 - **做了什麼**：整合分支 `integration/wave-1b`：
   - `risk-engine-kill-switch` 第 1–3 組：`runtime/src/risk/`（28 項 Pre-Trade / Entry / Position 檢查、`RiskStatusReport` / `risk_checks` / 事件輸出、ARM 與 PRE_FLIGHT 閘門、Entry / Position 監控）；依賴以注入介面 + 假資料測試。review 發現**輸入為 NaN / Infinity / 空陣列時風控放行（fail-open）**，已修正為一律 FAIL（集中輸入驗證 + 逐欄位自動產生的缺漏測試）。第 4 組 Kill Switch blocked-by C-16。
