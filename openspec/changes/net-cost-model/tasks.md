@@ -29,4 +29,4 @@
 ## 6. 文件與收尾
 
 - [ ] 6.1 更新文件：規格書 §5（成本欄位語意）、§17（第一階段模型與退回順序）、§20（Expected 同結構）；技術書 §24、§25、§38（新設定欄位、`minimum_funding_spread_pct` → `minimum_net_spread_pct`）；HANDOFF §4.2 P4 / P9 狀態、§6 B9；issue Q-05 / Q-06 驗收勾選
-- [ ] 6.2 執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate net-cost-model --strict` 全數通過並附輸出；更新 HANDOFF §7 交接紀錄（含 Q-05 修正前後數字）
+- [ ] 6.2 `npm run lint` / `npm run build` / `npm test`（= `npm run check`：92 test files、932 tests）與 `openspec validate net-cost-model --strict` 皆已執行並通過（見報告 Evidence 一節附完整輸出）；唯「更新 HANDOFF §7 交接紀錄」未執行——`assets/HANDOFF.md` 不在本 agent 可編輯範圍，確切文字已列入報告
