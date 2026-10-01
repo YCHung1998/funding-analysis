@@ -20,7 +20,7 @@
 ## 4. 舊型別遷移規則
 
 - [x] 4.1 六個舊型別加 `@deprecated`（註明 v0.2 對應與遷移順序）；`src/types/legacy/` 建立 v0.2 → v0.1 顯示 adapter（`toLegacyOrderState`、`toLegacyPositionState`）與歷史資料匯入（`WithUnknownTimestamps<T>`、`timestamp_source: 'UNKNOWN'`），附測試；task 1.1 的 characterization test 仍全綠
-- [ ] 4.2 在 `assets/HANDOFF.md` §6 Backlog 加入後續六個「一次一型別」遷移項目（順序見 design Decision 7）— 依指示不得編輯 `assets/HANDOFF.md`；確切文字已附在最終報告，交由整合者貼上
+- [x] 4.2 在 `assets/HANDOFF.md` §6 Backlog 加入後續六個「一次一型別」遷移項目（順序見 design Decision 7）— 由 integrator 於 `integration/wave-1` 加入（B12–B17）
 
 ## 5. 收尾
 

@@ -654,6 +654,8 @@ interface FundingSettlement {
 
 ## 19. Funding Eligibility
 
+📎 各交易所資金費率機制官方文件（結算時間偏差、費率計算方式）：[`REFERENCES.md`](REFERENCES.md)。
+
 ```text
 Position Open Time → Funding Timestamp → Position Eligibility → Funding Settlement
 ```

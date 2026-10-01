@@ -440,6 +440,8 @@ Net PnL = Funding PnL + Price PnL − Fees − Other Costs
 
 ## 23. Funding Engine
 
+📎 各交易所資金費率機制官方文件（結算時間偏差、費率計算方式）：[`REFERENCES.md`](REFERENCES.md)。
+
 Funding Engine 必須獨立。
 
 ```text

@@ -26,4 +26,4 @@
 
 ## 5. 收尾
 
-- [ ] 5.1 （部分完成，見 report）執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate instrument-registry --strict` 全數通過並附輸出 ✅；`npm run dev` 後實際打 `/api/market/live-scan` 與 `/api/market/live-klines?symbol=1000PEPEUSDT`，記錄改前 / 改後配對數與前 10 名 ✅；**未完成**：更新 HANDOFF §4.2、§4.3、`assets/ARCHITECTURE.md`、新增 HANDOFF §7——依任務指示本 agent 不得編輯 `assets/HANDOFF.md`／`assets/ARCHITECTURE.md`，確切文字已附在 report，交由 integrator 合併
+- [x] 5.1 執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate instrument-registry --strict` 全數通過並附輸出；實打 live-scan / live-klines 記錄改前改後（805 → 714 組）；HANDOFF §4.2（P1 P2 P3 P6 ✅）、§4.3、§7 與 `assets/ARCHITECTURE.md` §2 索引由 integrator 更新（Mermaid / architecture.json / html 重產為後續項目）

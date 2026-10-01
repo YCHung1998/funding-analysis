@@ -96,12 +96,12 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 
 | ID | 問題 | 位置 | 影響需求 |
 |----|------|------|---------|
-| P1 | 不同結算週期（1h/4h/8h）的費率直接相減；Binance/Bitget/OKX 週期寫死 8 | `server.ts:187,232,247` | #1 |
-| P2 | 兩腿結算時間未檢查是否一致，取 `min(nextFundingTime)` 當 T | `server/liveScanMath.ts` `resolveSettlement` | #1 #3 |
-| P3 | 24h 量只取 Binance；缺值填 `10,000,000`（實測 PUFFERUSDT 命中）→ 冷門幣看起來有量 | `server.ts:171` | #1 |
+| P1 | ✅ 已解（`instrument-registry`）：配對改為兩腿下次結算時間差 ≤ 60s 才成立，週期取各所回傳值。原描述：不同結算週期（1h/4h/8h）的費率直接相減；Binance/Bitget/OKX 週期寫死 8 | `runtime/src/market/instruments/matching.ts` | #1 |
+| P2 | ✅ 已解（`instrument-registry`）：`matchPair` 逐腿比對結算時間，不再取 min。原描述：兩腿結算時間未檢查是否一致，取 `min(nextFundingTime)` 當 T | `runtime/src/market/instruments/matching.ts` | #1 #3 |
+| P3 | ✅ 已解（`instrument-registry`）：每腿各自的 24h 量，缺值直接淘汰。原描述：24h 量只取 Binance；缺值填 `10,000,000`（實測 PUFFERUSDT 命中）→ 冷門幣看起來有量 | `server/liveScanRegistry.ts` | #1 |
 | P4 | 即時滑價 = 依量分三級常數，未用盤口深度 / K 棒波動 | `server/liveScanMath.ts` `computeLiveScanNetPnl` | #2 |
 | P5 | ~~各所費率欄位語意未對齊~~ **已推翻**：兩者皆為預測值，實際風險見 Q-04。原描述：Binance 用 `lastFundingRate`、Pionex 用 `nextFundingRate`（當期 vs 預測，**需查官方文件確認**） | `server.ts:183,198` | #1 |
-| P6 | `extractBaseSymbol` 去掉 `1000` 前綴但沒換算倍數；且 `replace('USDT','')` 只替換第一次出現 | `server/liveScanMath.ts` `extractBaseSymbol` | #1 #3 |
+| P6 | ✅ 已解（`instrument-registry`）：以 `instrument_key` + 價格倍數配對，反向合約不再併入線性合約（舊函式與 `[Q-xx] 現況` 測試保留為歷史紀錄，server 已不呼叫）。原描述：`extractBaseSymbol` 去掉 `1000` 前綴但沒換算倍數；且 `replace('USDT','')` 只替換第一次出現 | `runtime/src/market/instruments/canonical.ts` | #1 #3 |
 | P7 | Dry-run 數值寫死：延遲依交易所名稱三元式、價格漂移固定 ±0.008%、保證金 `$5,000`、風控 r5/r7/r9 永遠 PASS；唯一失敗情境是單腿 429 | `dryRunEngine.ts` | #3 |
 | P8 | 部分成交、API timeout、重試、費率在 T 前翻轉，皆未模擬 | `dryRunEngine.ts` | #3 |
 | P9 | 手續費固定 taker 0.05%，無各所 / maker / VIP 設定 | 多處 | #3 |
@@ -115,6 +115,8 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 ### 4.3 新增一個交易所目前要改的地方
 
 這份清單本身就是 P10 的症狀——目標是縮到「新增 1 個 adapter 檔 + 註冊 1 行」。
+
+> 2026-10-01（`instrument-registry`）：**合約 metadata** 已達成目標——新增交易所只需一個 `runtime/src/adapters/<exchange>/instruments.ts` 正規化函式（產出 `InstrumentSnapshotInput[]`，參考 binance / bybit / okx / bitget / pionex）並在 `server.ts` 的 metadata 刷新註冊；`runtime/src/market/instruments/` 不需修改（不得出現交易所名稱，`runtime/test/instrumentsNoExchangeLiteral.test.ts` 把關）。結算規則表另需在 `runtime/src/venue/venueRules.ts` 補該所規則。下列 1–7 仍適用於研究 UI 的舊型別與費率抓取段。
 
 1. `src/types/schema.ts` → `ExchangeId`
 2. `src/types/systemSpec.ts` → `SupportedExchange`、`SimulatedOrderLeg.exchange`、`FunnelCandidate` 各欄位、`TimelineMilestone.exchange`、`LocalSecretsConfig`
@@ -146,15 +148,24 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 | B0 | ✅ 完成（change `setup-vitest`）：建立 vitest，先為 `arbitrageEngine`、`extractBaseSymbol`、spread 計算補特性測試（鎖住現有行為） | P13 | S |
 | B1 | 修 `npm install` 依賴衝突；清掉 AI Studio 遺留 | P14 P15 | S |
 | B2 | 費率正規化：各所取真實週期，spread 改為「同一結算時點實際收付」或「換算成每小時」比較，並在 UI 標示 | P1 P5 | M |
-| B3 | 結算時間對齊：只配對兩腿結算時間差 ≤ 容忍值（如 60s）的組合 | P2 | S |
+| B3 | ✅ 完成（`instrument-registry`）：結算時間對齊：只配對兩腿結算時間差 ≤ 容忍值（如 60s）的組合 | P2 | S |
 | B4 | 流動性改為每所各自的 24h 量 + 盤口深度；缺資料 = 淘汰而非填預設值；加最低量門檻 | P3 P4 | M |
-| B5 | 符號正規化：處理 `1000x` 倍數、改用各所 instrument info 對照 | P6 | M |
+| B5 | ✅ 完成（`instrument-registry`）：符號正規化：處理 `1000x` 倍數、改用各所 instrument info 對照 | P6 | M |
 | B6 | server 改走 `adapters/` 並統一型別：`Record<ExchangeId, …>` 取代平鋪欄位，交易所註冊表集中一處 | P10 | L（建議拆 2 個 change） |
 | B7 | 歷史結算窗口：抓真實「結算時刻 ±2m」1m K 棒（非最近 5 根），供需求 #2 | #2 | M |
 | B8 | Dry-run 情境引擎：可設定 seed 的隨機延遲、部分成交、timeout/重試、費率翻轉、滑價分布；輸出多次模擬的損益分布 | P7 P8 | L |
 | B9 | 手續費設定化（每所 maker/taker/VIP） | P9 | S |
 | B10 | 新手模式：首頁「一條龍」流程（選幣 → 看風險 → 看邊界 → dry-run），隱藏進階分頁 | #5 | M |
 | B11 | Secret Vault 改為不持久化或加密；在真正需要下單前可考慮直接移除 | P12 | S |
+| B12 | 舊型別遷移 1/6：`OrderState`（v0.1）→ `PaperOrder.order_state`，改 import `runtime/src/types` | P10 | S |
+| B13 | 舊型別遷移 2/6：`SimulatedOrderLeg` → `PaperOrder` + `Fill` | P10 | M |
+| B14 | 舊型別遷移 3/6：`PositionState` → `Trade.status`（`TradeStatus`） | P10 | M |
+| B15 | 舊型別遷移 4/6：`TimelineMilestone` → 由 `TradingEvent` 絕對時間戳推導 | P10 | M |
+| B16 | 舊型別遷移 5/6：`ArbitrageTradeResult` → `TradeResult` | P10 | M |
+| B17 | 舊型別遷移 6/6（最後，依賴 Runtime scanner）：`FunnelCandidate` → `Opportunity` | P10 | L |
+| B18 | event-loop 剩餘本地型別改用 `TradingEvent`：`SessionPhaseChangedEvent`、`OpportunityEvent`（及 `PositionSide`、`TradeHedgeState`、`SessionPhase` 的歸屬），見 `runtime/src` 內 `TODO(trading-schema-types)` | — | S |
+
+B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run check` 全綠（C-11 規則 1）。
 
 ## 7. 交接紀錄格式
 
@@ -168,6 +179,17 @@ funnelScanner.ts (15 個寫死幣) ──► App.tsx 預設候選、Dry-run Top3
 - **下一步建議**：<1–3 項，指向 Backlog ID>
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
+
+### 2026-10-01（2）— Claude (Opus 5.5) 整合 + 3 個 Sonnet agent（第一波）
+- **做了什麼**：三個 change 並行開發後由 integrator 合併（分支 `integration/wave-1`）：
+  - `trading-schema-types`：`runtime/src/types/` 成為 v0.2 Schema 單一來源（ids、5 張狀態轉換表、Opportunity / Trade / Order / Fill / Funding / Result / Risk / Account、`TradingEvent` 含 instrument-registry 與 event-loop 擴充碼、`assertNoCredentials` / `validateEntity`、`glossary.ts`）；六個舊型別 `@deprecated`、`src/types/legacy/`；`RiskStatusReport` 改由 runtime re-export。
+  - `paper-trading-event-loop`：`runtime/src/clock`（Clock / VirtualClock / RealClock）、`scheduler`、`venue`（結算規則表）、`session`（場次時間表、狀態機、資格、持倉上限）、`opportunity`（失效、ARM 決策）、`funding`（執行閘門、入帳推定）。review 發現並修正 TimerQueue 兩個 bug（批次中新排的計時器被丟棄、較早 callback 讀到錯誤 `now()`）。
+  - `instrument-registry`：`runtime/src/market/instruments`（canonical、registry、matching、orderSpec）、5 所 instrument adapter、`BasicRestClient`；`server.ts` live-scan / live-klines 改用註冊表。review 發現 Bitget 結算時間未取得（Bitget 從不配對），已補 `current-fund-rate` 批次端點（5 分鐘刷新 + STALE 提前刷新）。
+  - 整合：本地暫時型別改為 import `runtime/src/types`（registry 事件改為正式 `TradingEvent` 格式）；型別所有權守門測試修正誤判；新增 `docs/REFERENCES.md`。
+- **驗證證據**：`npm run check` 全綠（48 檔 / 293 測試）；`openspec validate --all --strict` 12/12；各 change 皆有紅燈→綠燈證據（agent 回報 + integrator 獨立重跑）。live-scan（抽出前 805 組 / 過門檻 12 → 現在 714 組 / 6；五所皆 OK；Bitget 出現在 325–412 組最佳配對；所有候選兩腿結算時間差 0 ms）；`live-klines?symbol=1000PEPEUSDT` → `PEPE_USDT_PERP`；非法 symbol → 400。
+- **沒做完 / 已知問題**：event-loop task 1.2（規格書 / 技術書段落回寫）未做；B18（event-loop 剩餘本地事件型別）；`price_mismatch_tolerance_pct`（2%）與 `funding_alignment_tolerance_ms`（60s）寫死在 `server.ts`，尚未設定化；Pionex / Bitget 尚無結算規則表（`requireVenueRule` 會 throw）。
+- **下一步建議**：第 1b 波 `paper-trading-ui`、`risk-engine-kill-switch`（第 1–3 組）；第二波 `net-cost-model`、`trading-event-store`、`websocket-data-layer`。
+- **需要使用者決定的事**：event-loop 的兩處 spec 解讀（結算保護區間採「每腿各自換算再取保守值」；一腿 SETTLED、一腿 MISSED 時 `funding_confirmed = false`）；`trading-schema-types` design 的 7 項 Open Questions 與自行補的術語 / 欄位型別（需回寫規格書）。
 
 ### 2026-10-01 — Claude (Opus 5.5)
 - **做了什麼**：B0 / P13（OpenSpec change `setup-vitest`，分支 `feature-setup-vitest`，自 `47c6df0` 分出——`develop` 當時尚未含 proposal）。導入 `vitest@5.0.3` + `@vitest/coverage-v8@5.0.3`（peer 支援 vite 8，Open Question 1 不需退回 4.x）；`vitest.config.ts` / `vitest.setup.ts`（fetch 替身拋錯）；scripts `test`、`test:watch`、`test:coverage`、`check`。特性測試 11 檔：`arbitrageEngine`、`funnelScanner`、`dryRunEngine`、6 個 adapter、`server/liveScanMath`、`test/infrastructure`；已知 bug 以 `[Q-01] [Q-02] [Q-05] [Q-06] [Q-08] [P1] [P2] [P4] [P6] [P7]` 標註「現況」。`server.ts` 的 `extractBaseSymbol`、最佳配對、結算時間彙整、Expected Net PnL 逐字搬到 `server/liveScanMath.ts`。

@@ -47,7 +47,10 @@ flowchart LR
 | ID | 元件 | 原始碼 | 資料性質 | 說明 |
 |----|------|-------|---------|------|
 | exchanges | 5 交易所公開 API | `server.ts:68-117` | 即時 | 無需 API Key；各 6s timeout，失敗回空陣列 |
-| server | Express 伺服器 | `server.ts:54-371` | 即時 | 自行解析各所 JSON → 以 base symbol 聚合 → 兩兩配對取最大 spread → 算預期淨利 |
+| server | Express 伺服器 | `server.ts`、`server/liveScanRegistry.ts`、`server/bitgetFundingSchedule.ts` | 即時 | 啟動時與每小時刷新 instrument metadata（Bitget 結算時程每 5 分鐘）；live-scan 以 `instrument_key` 聚合 → `matchPair` 只保留結算對齊、同類型、量完整的組合 → 算預期淨利；註冊表首次刷新完成前回 503 `REGISTRY_NOT_READY` |
+| registry | Instrument Registry | `runtime/src/market/instruments/`、`runtime/src/adapters/*/instruments.ts`、`runtime/src/market/http/` | 即時 metadata | 交易所 × 合約註冊表：統一 ID `BASE/QUOTE:SETTLE`、價格倍數、合約類型、狀態、結算時程（不以 +週期推算）、下單規格；`matchPair` 8 項檢查 |
+| rtypes | Runtime 型別 | `runtime/src/types/` | — | v0.2 Schema 單一來源（實體、狀態轉換表、`TradingEvent`、術語表、`assertNoCredentials`） |
+| eventloop | 時鐘與結算場次（純邏輯） | `runtime/src/{clock,scheduler,venue,session,opportunity,funding}/` | — | Clock / VirtualClock / RealClock、交易所結算規則表、場次時間表與狀態機、機會失效、資金費執行閘門與入帳推定；尚未接上 server |
 | cache | 記憶體快取 | `server.ts:22-23` | — | 只快取 live-scan，5 秒 |
 | svc | liveMarketService | `src/services/liveMarketService.ts` | — | 前端呼叫 3 個 `/api/*` |
 | ui | App 分頁 | `src/App.tsx`、`src/components/*` | 混合 | 9 個分頁，見下表 |
@@ -55,7 +58,7 @@ flowchart LR
 | arb | arbitrageEngine | `src/engine/arbitrageEngine.ts` | 公式 | 60 秒執行實驗、滑價模型；輸入來自 mock |
 | funnel | funnelScanner | `src/engine/funnelScanner.ts` | mock | 15 個寫死幣種的三級漏斗；提供 Dry-run 預設 Top 3 |
 | mock | mockMarketData | `src/data/mockMarketData.ts` | mock | 假結算事件 + ±2m K 棒 |
-| adapters | adapters/* | `src/adapters/*.ts`、`src/types/schema.ts` | 範例 | 原始 payload → `CommonFundingRecord`；**server 沒有使用** |
+| adapters | adapters/* | `src/adapters/*.ts`、`src/types/schema.ts` | 範例 | 原始 payload → `CommonFundingRecord`；**server 沒有使用**（server 改用 `runtime/src/adapters/*/instruments.ts`） |
 | secrets | Secret Vault | `src/components/LocalSecretsView.tsx:71` | — | 明文存 localStorage；目前無任何程式使用這些 key |
 
 ### 分頁 → 元件
@@ -74,10 +77,14 @@ flowchart LR
 
 ## 3. 型別（兩套並存，見 HANDOFF P10）
 
+- **新程式一律使用** `runtime/src/types/`（trading-schema 單一來源）；下列兩套為研究原型舊型別，已標 `@deprecated`，依 HANDOFF B12–B17 逐一遷移。
+
 - `src/types/schema.ts`：`CommonFundingRecord`、`SettlementWindowBar`、`ArbitrageTradeResult`（以 Pionex × Binance 兩腿為中心）
 - `src/types/systemSpec.ts`：`FunnelCandidate`、`SimulatedOrderLeg`、`OrderState` / `PositionState`、`RiskStatusReport`、`LocalSecretsConfig`（5 所欄位平鋪）
 
 ## 4. 更新方式
+
+> ⚠️ 2026-10-01：§2 索引已更新到第一波（instrument-registry / trading-schema-types / paper-trading-event-loop），但 §1 Mermaid 圖、`architecture.json` / `.html` / `.png` 尚未重新產生。
 
 架構改變時：
 
