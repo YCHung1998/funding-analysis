@@ -133,8 +133,14 @@ export const liveDataSource: PaperDataSource = {
 };
 
 export function resolveDataSourceKind(): PaperDataSourceKind {
-  const raw = (import.meta as unknown as { env?: Record<string, string | undefined> }).env
+  // Production/dev builds: Vite statically provides import.meta.env.VITE_*.
+  // Tests: vitest's default (non-Vite-plugin) environment doesn't populate
+  // arbitrary VITE_* keys on import.meta.env, so vi.stubEnv (which sets
+  // process.env) wouldn't be observable without this fallback.
+  const viteEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env
     ?.VITE_PAPER_DATA_SOURCE;
+  const processEnv = typeof process !== 'undefined' ? process.env.VITE_PAPER_DATA_SOURCE : undefined;
+  const raw = viteEnv ?? processEnv;
   return raw === 'mock' ? 'mock' : 'live';
 }
 
