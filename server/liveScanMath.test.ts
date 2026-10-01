@@ -3,6 +3,31 @@ import { computeLiveScanNetPnl, extractBaseSymbol, findBestPair, resolveSettleme
 
 // [Q-03] 量缺值時假設 1,000 萬（`|| 10000000`）位於 server.ts 的 getOrCreate 閉包，本 change 未抽出、未鎖住；
 // 由 instrument-registry / B4 處理時補測試。
+//
+// instrument-registry change 說明：`extractBaseSymbol` / `findBestPair` / `resolveSettlement` 已不再被
+// `server.ts` 呼叫（改由 Instrument Registry + `server/liveScanRegistry.ts#buildLiveScanCandidates` 取代），
+// 但本檔刻意保留、不刪除、不修改期望值——它們仍如實描述這三個函式本身的（未變更）行為，做為回退
+// 保護與歷史紀錄。下列測試是這些 Q-xx 現況案例在新架構下「修正後」的對應版本（fail-then-pass 證據見
+// 各檔案 git history）：
+//   - [Q-01] USDT_BTC_PERP 覆蓋 BTC
+//     -> runtime/src/market/instruments/canonical.test.ts「reverse-quoted contract does not collapse」
+//     -> server/liveScanRegistry.test.ts「Reverse contract no longer overrides BTC」
+//   - [Q-01][P6] 1000x 倍數前綴遺失
+//     -> runtime/src/market/instruments/canonical.test.ts「1000x prefix resolved to multiplier」
+//     -> runtime/src/market/instruments/matching.test.ts「1000x pair normalizes prices」
+//   - [Q-02][P1][P2] 不同週期費率直接相減 / 取最早結算時間 min(T)
+//     -> runtime/src/market/instruments/matching.test.ts「4h leg and 8h leg at different times rejected」
+//     -> server/liveScanRegistry.test.ts「Misaligned best pair excluded」
+//   - [Q-02] 無有效結算時間時假設 8 小時
+//     -> runtime/src/market/instruments/matching.test.ts「Missing funding time rejected」
+//        （registry 以 STALE/MISSING 取代外推，不假設 8h）
+//   - [Q-03] SETTLING 腿照樣配對
+//     -> runtime/src/adapters/binance/instruments.test.ts「SETTLING maps to DELISTING」
+//     -> runtime/src/market/instruments/matching.test.ts「Delisting leg rejected」
+//   - [P3] 量缺值時假設 1,000 萬
+//     -> server/liveScanRegistry.test.ts「Missing volume eliminates instead of defaulting」
+//   - [BE-09] live-klines 符號未驗證、1000x 符號轉換錯誤
+//     -> server/liveKlinesResolve.test.ts
 
 const EXCHANGES = ['Pionex', 'Binance', 'Bybit', 'Bitget', 'OKX'] as const;
 
