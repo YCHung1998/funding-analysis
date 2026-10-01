@@ -2,7 +2,7 @@
 
 > 給**下一位接手者**（人或 AI agent）的單一入口。先讀完本檔再動 code。
 > 使用者導向的說明在 [`../README.md`](../README.md)；本檔講「怎麼接著做、不能踩什麼」。
-> 先看架構圖：[`ARCHITECTURE.md`](ARCHITECTURE.md)。
+> 先看架構圖：[`ARCHITECTURE.md`](ARCHITECTURE.md)。安裝、測試與手動驗證步驟：[`TESTING.md`](TESTING.md)。
 > 詳細問題清單（25 個，含實測與參考）：[`../issue/README.md`](../issue/README.md)。
 > 下一階段規格：[`../docs/TRADING_SYSTEM_SPEC.md`](../docs/TRADING_SYSTEM_SPEC.md)（Paper Trading v0.2，What）＋ [`../docs/PAPER_TRADING_TECH_SPEC.md`](../docs/PAPER_TRADING_TECH_SPEC.md)（開發技術書，How）。**兩份文件中標 ⚠️ 待決 C-xx 的段落，決定前不得實作。**
 

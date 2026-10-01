@@ -6,7 +6,7 @@
 ⚠️ **目前狀態：研究 / 模擬原型（Research + Dry-run）。本專案沒有任何真實下單程式碼。**
 部分頁面使用即時公開行情，部分頁面仍是寫死的 mock 資料——請先看 [§4 哪些是真的、哪些是假的](#4-哪些是真的哪些是假的)。
 
-接手開發請先讀 👉 [`assets/HANDOFF.md`](assets/HANDOFF.md)　·　架構圖 👉 [`assets/ARCHITECTURE.md`](assets/ARCHITECTURE.md)
+接手開發請先讀 👉 [`assets/HANDOFF.md`](assets/HANDOFF.md)　·　架構圖 👉 [`assets/ARCHITECTURE.md`](assets/ARCHITECTURE.md)　·　安裝 / 測試 / 手動驗證 👉 [`assets/TESTING.md`](assets/TESTING.md)
 
 下一階段（Paper Trading）規格 👉 [`docs/TRADING_SYSTEM_SPEC.md`](docs/TRADING_SYSTEM_SPEC.md)　·　開發技術書 👉 [`docs/PAPER_TRADING_TECH_SPEC.md`](docs/PAPER_TRADING_TECH_SPEC.md)
 
@@ -210,6 +210,7 @@ docs/                          Paper Trading 規格書（What）與開發技術�
 openspec/changes/              進行中的 OpenSpec change（proposal / design / specs / tasks）
 openspec/specs/                已歸檔、生效中的能力規格（例如 test-infrastructure）
 assets/HANDOFF.md              交接規範 & 目前狀態 & backlog
+assets/TESTING.md              安裝排錯、自動化測試、API / UI 手動驗證步驟
 assets/ARCHITECTURE.md         架構圖（Mermaid + 元件索引，agent 優先讀這份）
 assets/architecture.html       互動式架構圖（瀏覽器打開）
 assets/architecture.json       架構圖原始定義（含元件 → 原始碼路徑）
