@@ -23,8 +23,8 @@
 ## 5. 研究端修正與過渡
 
 - [x] 5.1 `arbitrageEngine.ts` Q-05 修正：先把特性測試期望改為 `≈ −1.20` 並確認紅燈，再改 `net = gross − fee`、腿別 net 同步、`total_slippage` 保留為歸因、預設費率改取費率表；`ExecutionSimulator` 手續費依腿別交易所對應並加 §20.1 滑價提示
-- [ ] 5.2 `server/liveScanMath.ts`（`findBestPair`、`computeLiveScanNetPnl`）與 `server.ts` live-scan 改用成本模型：先把 `liveScanMath.test.ts` 的 `[Q-05][P4]` / `[Q-06]` 期望改為淨值口徑並確認紅燈，再實作（預設費率表、Binance bookTicker + 各所 top-of-book、`LEGACY_VOLUME_TIER` 標示、淨值選對 / 排序 / `meets_threshold`、新欄位）；以固定假回應的測試驗證「毛 spread 最大者不再排第一」；`systemSpec.ts` / `liveMarketService.ts` 型別補欄位
-- [ ] 5.3 前端 `FunnelScannerView` 改讀伺服器淨值（`pair_net_spreads`、預設淨值排序、毛 spread 次要欄位、估計值樣式）；`dryRunEngine.ts` 費率改查預設表（P9 bug fix）；README §4 mock / 估計值表同步
+- [x] 5.2 `server/liveScanMath.ts`（`computeLiveScanNetPnl`）與 `server/liveScanRegistry.ts`（`buildLiveScanCandidates`，現為 live-scan 配對/排序的實際位置——`findBestPair` 已於 instrument-registry change 停用，見 `liveScanMath.test.ts` 檔頭說明，本變更不再呼叫、也不修改其期望值）改用成本模型：先把 `liveScanMath.test.ts` 的 `[Q-05][P4]` / `[Q-06]` 期望改為淨值口徑並確認紅燈，再實作（預設費率表、`LEGACY_VOLUME_TIER` 標示 — Binance bookTicker / 各所 top-of-book 盤口訂閱屬 `websocket-data-layer`，本 change Non-goal 未實作、淨值選對 / 排序 / `meets_threshold`、新欄位 `net_spread_pct`/`pair_net_spreads`/`slippage_model`/`entry_basis_pct`/`fee_config_version`）；以固定假回應的測試驗證「毛 spread 最大者不再排第一」（`server/liveScanRegistry.test.ts`）；`liveMarketService.ts` 型別補欄位（`systemSpec.ts` 的 `FunnelCandidate` 屬 `funnelScanner.ts` 的 mock-data 流程，未接上即時盤口，故未補這些欄位——見報告）。額外修正（任務清單未列，依協調者指示一併處理）：`src/engine/funnelScanner.ts` 的 `[Q-06]` 固定 0.20% 費用改為透過 Fee Engine 計算（Pionex/Binance 皆 VIP0 taker 0.05%，數值巧合不變，但不再是字面常數，新增費率表可覆寫的紅燈測試驗證）。
+- [x] 5.3 前端 `FunnelScannerView` 改讀伺服器淨值（新增 `pairNetSpreadFor` 純函式 + 測試，`pair_net_spreads` 查找取代 `spread − fee_drag_pct − est_slippage_pct` 自行重算、預設排序改 `expected_net_pnl_pct`）；`dryRunEngine.ts` 費率改查 Fee Engine 預設表（P9 bug fix；紅燈案例：Bybit short 腿 entry_fee 0.5→0.55）。README §4 mock / 估計值表同步為文件類任務，未執行（見報告「Exact HANDOFF/README text」一節，不得由本 agent 編輯 README.md）
 
 ## 6. 文件與收尾
 

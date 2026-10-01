@@ -24,6 +24,8 @@ import {
   OrderState,
   PositionState
 } from '../types/systemSpec';
+import { feeRate } from '../../runtime/src/accounting/feeEngine';
+import type { ExchangeId } from '../../runtime/src/types/ids';
 
 export interface DryRunExecutionResult {
   candidate: FunnelCandidate;
@@ -122,11 +124,15 @@ export function executeDryRunSimulation(
     cancel_latency_ms: forceLegImbalance ? 32 : undefined,
   };
 
-  // Fees (0.05% taker each side)
-  const entryFeeLong = notional * 0.0005;
-  const exitFeeLong = notional * 0.0005;
-  const entryFeeShort = forceLegImbalance ? 0 : notional * 0.0005;
-  const exitFeeShort = forceLegImbalance ? 0 : notional * 0.0005;
+  // P9 fix (frozen module C-04: only the fee *source* changes, no new behavior): fee rate read
+  // from the shared Fee Engine's default table per leg's actual exchange, instead of a hardcoded
+  // 0.05% applied to both legs regardless of identity.
+  const longFeeRate = feeRate(longEx as ExchangeId, 'TAKER');
+  const shortFeeRate = feeRate(shortEx as ExchangeId, 'TAKER');
+  const entryFeeLong = notional * longFeeRate;
+  const exitFeeLong = notional * longFeeRate;
+  const entryFeeShort = forceLegImbalance ? 0 : notional * shortFeeRate;
+  const exitFeeShort = forceLegImbalance ? 0 : notional * shortFeeRate;
 
   // Slippages
   const slipPct = candidate.est_slippage_pct > 0 ? candidate.est_slippage_pct * 0.25 : 0.00025;
