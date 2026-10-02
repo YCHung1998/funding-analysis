@@ -13,7 +13,7 @@
 
 ## 3. Runtime Health
 
-- [ ] 3.1 `healthModel.ts`：元件狀態、推導規則、`entry_allowed` 與 `entry_block_reasons`（stale、halt、scan-only 所斷線不影響）
+- [x] 3.1 `healthModel.ts`：元件狀態、推導規則、`entry_allowed` 與 `entry_block_reasons`（stale、halt、scan-only 所斷線不影響）。證據：`runtime/src/health/healthModel.ts`（純函式 `deriveHealth(inputs): RuntimeHealthModel`：`ENGINE`/`EXCHANGE`（含 `scanOnly`/`stale`）/`MARKET_DATA`/`SCANNER`/`RISK`/`PAPER_EXECUTION`/`DATABASE`/`CLOCK`/`CREDENTIALS` 元件狀態枚舉；`entry_block_reasons` 由 `ENTRY_HALT`、TRADING 所（非 `scanOnly`）的 `STALE_MARKET_DATA:<ex>` / `EXCHANGE_DISCONNECTED:<ex>`、`RISK_DISARMED`、`PAPER_EXECUTION_DISARMED`、`CREDENTIALS_MISSING`/`CREDENTIALS_INVALID`、`DATABASE_DEGRADED` 組成；`scanOnly` 交易所的斷線/stale 兩者皆不產生 block reason、也不影響 `marketData` 彙總狀態）＋ `runtime/src/health/healthModel.test.ts`（10 tests：全健康時 `entry_allowed=true`/無 reason；halt／TRADING 所 stale／TRADING 所斷線／RISK 或 PAPER_EXECUTION 未 ARMED／憑證 MISSING 或 INVALID／DB DEGRADED 各自單獨阻擋進場；scan-only 所同時斷線+stale 不阻擋且不影響 `marketData`；多個阻擋原因同時出現；其餘欄位原樣透傳）。design.md Implementation Notes 記錄本 task 對 tasks.md 括號未明列但補上的額外阻擋規則（RISK/PAPER_EXECUTION 未 ARMED、憑證、DB DEGRADED）之決議理由。
 - [ ] 3.2 `healthPublisher.ts` + `server.ts` 唯讀 `GET /api/paper/health`（2026-10-03 由 `/api/runtime/health` 改名，配合已合併的 `paper-trading-ui` 前端路徑，見 proposal.md）、`GET /api/runtime/reconciliation/latest`：失聯回 `UNREACHABLE`、server 寫入失敗、回應不含憑證
 
 ## 4. 啟動與恢復
