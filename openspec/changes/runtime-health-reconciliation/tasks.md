@@ -8,7 +8,7 @@
 ## 2. 對帳
 
 - [x] 2.1 `checks.ts` Order / Fill / Position / Trade / Projection 檢查（技術書 §31 的 1000 vs 900 例子先寫失敗測試）。證據：`runtime/src/reconciliation/types.ts`（`Mismatch`、`ReconciliationConfig`、快照型別）、`runtime/src/reconciliation/checks.ts`（純函式：`checkOrderFillSum`/`checkOrderAvgPrice`/`checkOrderRemaining`/`checkOrderStateQty`/`checkOrderTerminalTime`/`checkOrderOrphanCreated`/`checkPositionFillNet`/`checkTradeClosedNotFlat`/`checkTradeHedgedFlat`/`checkProjectionEvent`，另含 2.2 的 Capital 檢查函式）、`runtime/src/reconciliation/checks.test.ts`（23 tests，先紅後綠；`checkOrderFillSum` 一組直接驗證技術書 §31 的 1000 vs 900 例子）。另加 `runtime/test/reconciliationHealthArchitecture.test.ts`（2 tests）鏡射 `executionArchitecture.test.ts` 的「無交易所字面量」守門，涵蓋 `runtime/src/reconciliation/` 與 `runtime/src/health/`。
-- [ ] 2.2 Capital 檢查與資金保留原子性測試（連續超額保留、保留中途故障回滾、事件配對）
+- [x] 2.2 Capital 檢查與資金保留原子性測試（連續超額保留、保留中途故障回滾、事件配對）。證據：`runtime/src/reconciliation/checks.ts` 的 `checkCapitalReservedSum`/`checkCapitalAvailable`/`checkCapitalEventPairing`（task 2.1 時一併實作，因 Decision 1 的 Capital 檢查與 Order/Trade 檢查同屬 `checks.ts` 的純函式）＋ `runtime/src/reconciliation/capitalAtomicity.test.ts`（6 tests，使用真實 `Ledger`/`EventStore`/temp-dir DB/`VirtualClock`）：連續 5 次超額保留全部拒絕且 `reserved_capital_usdt` 全程為 0、事件全空；注入 `trade.saveTrade` 中途拋錯驗證整個 transaction（account snapshot + event）完整回滾；`checkCapitalReservedSum`/`checkCapitalAvailable` 的不一致偵測；`checkCapitalEventPairing` 分別驗證真實 reserve+release 流程配對正確、以及終態 Trade 缺少 `CAPITAL_RELEASED` 時正確標記。
 - [ ] 2.3 `reconciler.ts` + `entryHalt.ts`：Clock 排程、一致快照、`reconciliation_runs`、`RECONCILIATION_ERROR`、Trade → FAILED、`EntryHaltLatch`（重啟後仍生效、只能以 `ENTRY_HALT_CLEARED` 解除）、去重、不撤單不平倉
 
 ## 3. Runtime Health
