@@ -7,7 +7,7 @@
 
 ## 2. 對帳
 
-- [ ] 2.1 `checks.ts` Order / Fill / Position / Trade / Projection 檢查（技術書 §31 的 1000 vs 900 例子先寫失敗測試）
+- [x] 2.1 `checks.ts` Order / Fill / Position / Trade / Projection 檢查（技術書 §31 的 1000 vs 900 例子先寫失敗測試）。證據：`runtime/src/reconciliation/types.ts`（`Mismatch`、`ReconciliationConfig`、快照型別）、`runtime/src/reconciliation/checks.ts`（純函式：`checkOrderFillSum`/`checkOrderAvgPrice`/`checkOrderRemaining`/`checkOrderStateQty`/`checkOrderTerminalTime`/`checkOrderOrphanCreated`/`checkPositionFillNet`/`checkTradeClosedNotFlat`/`checkTradeHedgedFlat`/`checkProjectionEvent`，另含 2.2 的 Capital 檢查函式）、`runtime/src/reconciliation/checks.test.ts`（23 tests，先紅後綠；`checkOrderFillSum` 一組直接驗證技術書 §31 的 1000 vs 900 例子）。另加 `runtime/test/reconciliationHealthArchitecture.test.ts`（2 tests）鏡射 `executionArchitecture.test.ts` 的「無交易所字面量」守門，涵蓋 `runtime/src/reconciliation/` 與 `runtime/src/health/`。
 - [ ] 2.2 Capital 檢查與資金保留原子性測試（連續超額保留、保留中途故障回滾、事件配對）
 - [ ] 2.3 `reconciler.ts` + `entryHalt.ts`：Clock 排程、一致快照、`reconciliation_runs`、`RECONCILIATION_ERROR`、Trade → FAILED、`EntryHaltLatch`（重啟後仍生效、只能以 `ENTRY_HALT_CLEARED` 解除）、去重、不撤單不平倉
 
