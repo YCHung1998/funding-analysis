@@ -7,8 +7,8 @@
 
 ## 1. 讀取層
 
-- [ ] 1.1 `server/paperReadLayer.ts`：`new DatabaseSync(dbPath, { readOnly: true })`、`getAccountSnapshot()`；DB / 表不存在時統一 503（契約測試：readOnly 連線執行 INSERT 會失敗）
-- [ ] 1.2 `server/paperCursor.ts`：`encodeCursor` / `decodeCursor`（base64url JSON），格式錯誤回傳 `null`（由呼叫端轉 400）；round-trip 測試
+- [x] 1.1 `server/paperReadLayer.ts`：`new DatabaseSync(dbPath, { readOnly: true })`、`getAccountSnapshot()`；DB / 表不存在時統一 503（契約測試：readOnly 連線執行 INSERT 會失敗）。證據：`server/paperReadLayer.ts`（`openPaperDb`/`PaperReadLayerUnavailableError`/`getAccountSnapshot`：latest-by-`created_at`，無列或 DB 不存在皆拋 `PaperReadLayerUnavailableError`）、`server/paperReadLayer.test.ts`（5 tests：DB 不存在回 `undefined`、readOnly 連線 INSERT 確實拋錯（契約測試）、三列取 `created_at` 最大者、無列時拋錯、DB 不存在時 `getAccountSnapshot` 拋錯）、`server/test/paperDbFixture.ts`（溫層 fixture：temp-dir SQLite + 001-004 migrations + 真實 repository 寫入）。**實作筆記（genuine schema gap）**：`runtime/src/types/result.ts` 的 `TradeResult` 從未有對應資料表（`accounting/tradeResultAssembler.ts` 只在記憶體組裝；`assets/HANDOFF.md` 的 `position-funding-pnl` 條目明確把「何時寫入 DB」留給尚不存在的 Runtime 主迴圈）——design.md Migration Plan「no schema migration」的假設已過期（A-6/A-7 完全依賴這張表）。新增 `runtime/src/storage/migrations/004_trade_results.ts`（additive、reversible，欄位與 `TradeResult` 1:1，沿用 001-003 慣例）+ `004_trade_results.test.ts`（4 tests）解決；已記錄於 design.md Implementation Notes。
+- [x] 1.2 `server/paperCursor.ts`：`encodeCursor` / `decodeCursor`（base64url JSON），格式錯誤回傳 `null`（由呼叫端轉 400）；round-trip 測試。證據：`server/paperCursor.ts`、`server/paperCursor.test.ts`（6 tests：複合鍵 round-trip、單欄位鍵 round-trip、輸出不含 `+`/`/`/`=`、格式錯誤字串回 `null`、合法 base64url 但非 JSON 回 `null`、空字串回 `null`）。
 
 ## 2. Trades 端點
 
