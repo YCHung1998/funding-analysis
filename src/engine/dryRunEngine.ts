@@ -148,7 +148,11 @@ export function executeDryRunSimulation(
   // Funding PnL at T:
   // Short leg receives funding if shortRate > 0; Long leg pays if longRate > 0 (or receives if longRate < 0)
   // Formula: Long Funding PnL = - notional * longRate; Short Funding PnL = notional * shortRate
-  const fundingPnLLong = -notional * longRate;
+  // [Q-08 fix, position-funding-pnl task 3.3] When the other leg failed to fill
+  // (forceLegImbalance), this leg is emergency-closed (reduce-only) before the
+  // funding settlement time — it never earns/pays the scheduled funding cashflow
+  // either, so it must NOT be counted as if it held through settlement.
+  const fundingPnLLong = forceLegImbalance ? 0 : -notional * longRate;
   const fundingPnLShort = forceLegImbalance ? 0 : notional * shortRate;
 
   // Net PnLs

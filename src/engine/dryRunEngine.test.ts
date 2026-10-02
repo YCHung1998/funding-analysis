@@ -105,16 +105,18 @@ describe('executeDryRunSimulation：正常情境', () => {
 });
 
 describe('executeDryRunSimulation：forceLegImbalance', () => {
-  it('[Q-08] 現況：單腿失敗仍計多腿資金費', () => {
-    // 修正後預期：對沖未成立時不應計入任何資金費收益假設（見 issue/Q-08）
+  it('[Q-08 fixed, position-funding-pnl task 3.3] 單腿失敗時不對沖的 long 腿也不計資金費（emergency-closed 於結算前）', () => {
+    // 單腿失敗 -> LEG_IMBALANCE -> 緊急平倉；long 腿在結算前已被平掉，不應計入任何資金費收益假設（issue/Q-08）。
     const r = executeDryRunSimulation(candidate, 1000, true);
     expect(r.position_state).toBe('LEG_IMBALANCE');
     expect(r.cost_table.funding_pnl.leg_short).toBe(0);
-    expect(r.cost_table.funding_pnl.leg_long).toBeCloseTo(-1000 * 0.0001, 9);
+    expect(r.cost_table.funding_pnl.leg_long).toBe(0);
     expect(r.cost_table.position).toEqual({ leg_long: 1000, leg_short: 0, total: 2000 });
     expect(r.cost_table.entry_fee).toEqual({ leg_long: 0.5, leg_short: 0, total: 0.5 });
     expect(r.cost_table.net_pnl.leg_short).toBe(0);
-    expect(r.cost_table.net_pnl.total).toBeCloseTo(-1.42, 9);
+    // Was -1.42 before the fix (included the bogus -0.1 funding leg); now -1.32 with funding_pnl.leg_long = 0.
+    expect(r.cost_table.net_pnl.leg_long).toBeCloseTo(-1.32, 9);
+    expect(r.cost_table.net_pnl.total).toBeCloseTo(-1.32, 9);
   });
 
   it('telemetry 與空腿訂單', () => {
