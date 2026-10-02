@@ -9,6 +9,7 @@ import type { Fill, FundingSettlement, PaperOrder, PaperPosition } from '../type
 import { NodeSqliteDriver } from './driver';
 import { migrate } from './migrate';
 import { migration001 } from './migrations/001_initial';
+import { migration002 } from './migrations/002_position_accounting_fields';
 import { createOrderRepository, type OrderRepository } from './orderRepository';
 import { createTradeRepository } from './tradeRepository';
 import { tmpDriver } from './test-helpers';
@@ -123,7 +124,7 @@ describe('orderRepository', () => {
 
   beforeEach(() => {
     db = tmpDriver();
-    migrate(db, [migration001]);
+    migrate(db, [migration001, migration002]);
     seedTradeAndLeg(db);
     repo = createOrderRepository(db);
   });
@@ -188,6 +189,14 @@ describe('orderRepository', () => {
       opened_at: 2,
       created_at: 2,
       updated_at: 2,
+      base_quantity: 0.1,
+      entry_filled_quantity: 0.1,
+      exit_filled_quantity: 0,
+      entry_notional_usdt: 1000,
+      realized_price_pnl_usdt: 0,
+      fees_usdt: 0.5,
+      slippage_attribution_usdt: -0.1,
+      applied_fill_ids: ['fill1'],
     };
     repo.savePosition(position);
     expect(repo.getPosition('pos1')).toEqual(position);
