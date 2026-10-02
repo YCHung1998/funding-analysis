@@ -10,6 +10,13 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
+import { DatabaseSync } from 'node:sqlite';
+import {
+  buildHealthApiPayload,
+  buildReconciliationLatestPayload,
+  readLatestReconciliationRun,
+  readRuntimeHealthRow,
+} from './runtime/src/health/healthPublisher';
 import { buildLiveScanCandidates } from './server/liveScanRegistry';
 import { resolveKlinesSymbol } from './server/liveKlinesResolve';
 import { InstrumentRegistry } from './runtime/src/market/instruments/registry';
@@ -562,6 +569,66 @@ app.get('/api/market/live-klines', async (req, res) => {
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// --- runtime-health-reconciliation wiring (task 3.2) -----------------------
+// server.ts 不在 runtime/src/ 內，可直接讀系統時間（同上方 instrument-registry 註解）；
+// 這兩個路由唯讀 SQLite（design.md Decision 3：C-06 server 只唯讀，不開 IPC/port）。
+// 每次請求各自開一個 `readOnly: true` 連線、用完即關閉——避免跨 Runtime 重啟持有過期 handle
+// 或寫鎖（design.md Risks "SQLite 多 process 讀寫"：WAL 模式允許一寫多讀）。
+
+const PAPER_DB_PATH = process.env.PAPER_DB_PATH ?? path.resolve(process.cwd(), 'data', 'paper.sqlite');
+// `health_publish_interval_ms` 預設值待 Runtime 啟動流程（task 4.1 main.ts）正式組裝
+// `HealthConfig` 後接手；這裡先用同一個預設值獨立算「3 倍間隔」失聯閾值
+// （design.md Decision 3「失聯閾值 3 倍間隔吸收兩者偏差」），避免硬編一個與 Runtime
+// 實際發佈頻率脫鉤的門檻。
+const HEALTH_PUBLISH_INTERVAL_MS = 2_000;
+const HEALTH_STALE_THRESHOLD_MS = HEALTH_PUBLISH_INTERVAL_MS * 3;
+
+/** Opens a fresh read-only `node:sqlite` connection; `undefined` if the Runtime DB doesn't exist yet (fresh install / Runtime never started). */
+function openPaperDbReadOnly(): DatabaseSync | undefined {
+  try {
+    return new DatabaseSync(PAPER_DB_PATH, { readOnly: true });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * GET /api/paper/health
+ * 唯讀 Runtime Health（2026-10-03 由 `/api/runtime/health` 改名，見 proposal.md「What
+ * Changes」）。失聯（DB 不存在 / `runtime_health` 無列 / heartbeat 超過 3 倍發佈間隔）
+ * 回 `engine: 'UNREACHABLE'`。回應絕不含憑證本體，只有 `credentials` 狀態字串。
+ */
+app.get('/api/paper/health', (_req, res) => {
+  const reader = openPaperDbReadOnly();
+  try {
+    const row = reader ? readRuntimeHealthRow(reader) : undefined;
+    const payload = buildHealthApiPayload(row, { nowMs: Date.now(), staleThresholdMs: HEALTH_STALE_THRESHOLD_MS });
+    return res.json(payload);
+  } catch (err: any) {
+    console.error('[runtime-health] /api/paper/health failed:', err);
+    return res.status(500).json({ error: err.message || 'HEALTH_READ_FAILED' });
+  } finally {
+    reader?.close();
+  }
+});
+
+/**
+ * GET /api/runtime/reconciliation/latest
+ * 內部/維運用唯讀端點（非 UI 契約）：最近一次對帳 run 的紀錄，沒有任何 run 時回 `{ run: null }`。
+ */
+app.get('/api/runtime/reconciliation/latest', (_req, res) => {
+  const reader = openPaperDbReadOnly();
+  try {
+    const row = reader ? readLatestReconciliationRun(reader) : undefined;
+    return res.json(buildReconciliationLatestPayload(row));
+  } catch (err: any) {
+    console.error('[runtime-health] /api/runtime/reconciliation/latest failed:', err);
+    return res.status(500).json({ error: err.message || 'RECONCILIATION_READ_FAILED' });
+  } finally {
+    reader?.close();
   }
 });
 
