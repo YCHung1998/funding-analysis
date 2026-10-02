@@ -23,7 +23,8 @@
 
 ## 3. 雙腿執行
 
-- [ ] 3.1 接上 `position-accounting` 的 hedge ratio / `classifyHedge`（未合併前以 fake 實作同一介面）：`hedge_ratio_basis` 切換、`symbol_tier_overrides`、`HEDGE_RATIO_CHANGED` 記錄兩種比率（規格書 §13 例子、基準切換例子）
+- [x] 3.1 接上 `position-accounting` 的 hedge ratio / `classifyHedge`（已合併，直接 import `runtime/src/trading/hedgeRatio.ts` 的 `computeHedgeRatio`/`classifyHedge`，不重新實作）：`hedge_ratio_basis` 切換、`symbol_tier_overrides`、`HEDGE_RATIO_CHANGED` 記錄兩種比率（規格書 §13 例子、基準切換例子）
+  - Evidence: `runtime/src/trading/hedgeRatioEvent.ts`（`evaluateHedgeRatio`/`resolveHedgeThreshold`/`buildHedgeRatioChangedEvent`，`DEFAULT_HEDGE_RATIO_BASIS = 'QUANTITY'` 依 C-19）+ `runtime/src/trading/hedgeRatioEvent.test.ts`（11 tests）：§13 範例（NOTIONAL 基準 0.30/0.95/0.995 三分類）、基準切換範例（NOTIONAL → PARTIALLY_HEDGED 0.98814…、QUANTITY → HEDGED 1.0，`HEDGE_RATIO_CHANGED` payload 兩種比率皆有）、`symbol_tier_overrides` 覆寫改變分類結果。確認先紅（暫移走實作檔，`Cannot find module './hedgeRatioEvent'`）後綠。`npm run lint` 通過。
 - [ ] 3.2 `entryCoordinator.ts`：`PRE_FLIGHT → ENTRY_PENDING`、分類時機、`ABORTED`（ENTRY_TIMEOUT / ENTRY_REJECTED）與資金釋放、`PARTIALLY_HEDGED` 重送與計時、`canSubmitEntry` 拒絕、`forceLegImbalance`、Leg 狀態事件
 - [ ] 3.3 Emergency Close（撤單 → 重試 → reduce-only `EMERGENCY_CLOSE` → `CLOSED`/`EMERGENCY_EXIT` 或 `FAILED`/`EMERGENCY_EXIT_TIMEOUT`）與 `exitCoordinator.ts` 正常平倉（`canSubmitExit` 拒絕 `LOCK_WINDOW`、`NORMAL_EXIT`、`EXIT_TIMEOUT`）
 
