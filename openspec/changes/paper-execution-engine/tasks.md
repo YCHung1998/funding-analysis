@@ -8,7 +8,8 @@
 
 ## 2. PaperExecutionAdapter
 
-- [ ] 2.1 Order 狀態機與時間戳：`CREATED → SUBMITTED → ACKNOWLEDGED → …`，每次轉換經 `Ledger.applyOrderTransition` 寫入並產生對應事件；`REJECTED` 原因
+- [x] 2.1 Order 狀態機與時間戳：`CREATED → SUBMITTED → ACKNOWLEDGED → …`，每次轉換經 `Ledger.applyOrderTransition` 寫入並產生對應事件；`REJECTED` 原因
+  - Evidence: `runtime/src/execution/paperExecution.stateMachine.test.ts` — normal lifecycle timestamps (submit_time/ack_time/first_fill_time/final_fill_time/terminal_time) match tech spec §12-style timeline; event order `ORDER_CREATED, ORDER_SUBMITTED, ORDER_ACK, ORDER_FILL`; `REJECTED` keeps `rejection_reason`+`terminal_time`+`ORDER_REJECTED` event; traceability check (current `order_state` matches last event's `payload.to`/`after.order_state`). Satisfied by the task 1.1 adapter + `Ledger.createOrder`/`applyOrderTransition`/`applyFill`, exercised via a dedicated task-2.1 test file.
 - [ ] 2.2 `matching.ts` 逐檔吃單（技術書 §14 均價 100.006、SELL 吃 BID）、每價位一筆 Fill、手續費、滑價正負號、step size 檢查；`applyFill` 同步寫入
 - [ ] 2.3 部分成交與剩餘量：GTC 於盤口更新重撮、IOC `EXPIRED`、LIMIT 限價、`enable_partial_fill = false`
 - [ ] 2.4 `max_order_lifetime_ms`（規格書 §12 時間線）與 `ack_timeout_ms`（晚到 ACK、訂單遺失）
