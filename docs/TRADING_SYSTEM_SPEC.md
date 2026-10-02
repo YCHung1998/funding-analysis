@@ -2,7 +2,7 @@
 
 | 欄位 | 值 |
 |------|----|
-| Status | **Draft**（C-01～C-15、C-17、C-18 已決議；C-16、C-19 待決，見 [§34](#34-決策紀錄)） |
+| Status | **Draft**（C-01～C-19 全數已決議，見 [§34](#34-決策紀錄)） |
 | Previous Version | v0.1 = 現有 7 模組研究 / Dry-run 規格（`src/spec/arbitrageSpecV01.ts`、`src/types/*.ts`）（C-02） |
 | Current Target | Paper Trading / Automated Simulation |
 | Scan Exchanges | Pionex、Binance、Bybit、Bitget、OKX（5 所全部持續掃描）（C-01） |
@@ -511,13 +511,14 @@ Hedge Ratio = 300 / 1000 = 30%   → 低於 imbalance 門檻（預設 90%）→ 
 
 ---
 
-## 14. Leg Imbalance 與兩條門檻（✅ C-12）
+## 14. Leg Imbalance 與兩條門檻（✅ C-12、✅ C-19 2026-10-02 決議）
 
 ```text
-hedge_ratio = min(long_notional, short_notional) / max(long_notional, short_notional)
+base_qty = fill_quantity × contract_multiplier   // 換算成基礎資產數量，消除合約乘數差異
+hedge_ratio = min(long_base_qty, short_base_qty) / max(long_base_qty, short_base_qty)
 ```
 
-> ⚠️ 待決 C-19：以 notional 計算時，兩所價差會讓「數量完全相同」的兩腿也小於 100%（價差 0.5% → 99.5%）。對沖的本質是數量（delta）相等，建議改用「合約乘數換算後的基礎資產數量」計算。決議前先用 notional，但 §14.1 的預設值已預留此誤差。
+C-19 決議：改用「合約乘數換算後的基礎資產數量」計算（不再用 notional）。對沖的本質是數量（delta）相等，notional 計算會讓「數量完全相同」的兩腿因跨所價差而小於 100%（例：價差 0.5% → 99.5%），造成虛假的 PARTIALLY_HEDGED。`position-funding-pnl` 與 `paper-execution-engine` 的 hedge ratio 計算需收斂為同一份實作（兩者皆依賴本公式，不得各自實作）。§14.1 的門檻設定邏輯不變，但「跨所價差」不再是結構性誤差來源，只需考慮 step size 誤差。
 
 | hedge_ratio | 狀態 | 中文 |
 |-------------|------|------|
@@ -533,14 +534,14 @@ hedge_ratio = min(long_notional, short_notional) / max(long_notional, short_noti
 
 **① `hedge_ratio_hedged_min`（上門檻）——「多小的差距可以忽略？」**
 
-- 為什麼不是 100%：兩所的最小下單單位（step size）不同、數量需四捨五入、兩所價差也會讓 notional 不相等（C-19）。這些是**結構性、無法消除**的差距，若設 100% 幾乎每筆都會卡在 PARTIALLY_HEDGED。
+- 為什麼不是 100%：兩所的最小下單單位（step size）不同、數量需四捨五入。C-19 決議改用合約乘數換算後的基礎資產數量計算後，跨所價差已不再是誤差來源，剩下的結構性誤差只有 step size。
 - 設定方式：取「可接受的結構性誤差」的上限：
 
   ```text
-  hedged_min ≈ 1 − ( max(step_A × price, step_B × price) / leg_notional + 預期跨所價差 )
+  hedged_min ≈ 1 − max(step_A, step_B) / leg_base_qty
   ```
 
-  例：單腿 1,000U、兩所 step 對應約 2U、跨所價差約 0.3% → `1 − (0.002 + 0.003) = 0.995`；預設 0.99 留一點緩衝。
+  例：單腿基礎資產數量約 100、兩所 step 對應約 0.2 → `1 − 0.002 = 0.998`；預設 0.99 留一點緩衝。
 - 單腿名目越小，step 誤差佔比越大 → 小名目時要調低，或提高名目。
 
 **② `hedge_ratio_imbalance_below`（下門檻）——「裸部位大到要立刻止血的界線？」**
@@ -837,15 +838,20 @@ Risk Engine 必須在 **Opportunity → Trade Creation → Order Submission** �
 
 ---
 
-## 23. Kill Switch
+## 23. Kill Switch（✅ C-16 2026-10-02 決議）
 
-> ⚠️ 待決 C-16：本段（單一連鎖流程）與技術書 §33（三個獨立動作）的差異，詳細說明見 §34 C-16 列。決議前不得實作。
-
-原始描述：必須存在全域 **KILL SWITCH**，啟動後：
+原始描述（單一連鎖流程）已由下列三層分級取代，與技術書 §33 一致：
 
 ```text
-停止新 Trade → 取消所有 Pending Entry Orders → 評估 Existing Positions → 必要時 Emergency Close
+L1 STOP ENTRY（預設）→ L2 CANCEL ENTRY（只撤 purpose='ENTRY'）→ L3 FLATTEN（兩段式確認後平倉）
 ```
+
+- 只升不降，手動解除回 `NONE`；狀態由 `KILL_SWITCH_ACTIVATED`/`KILL_SWITCH_RELEASED` 事件重建。
+- L2 撤單後變單腿的 Trade 自動依 §14 分類處理（不停留、不等人工）。
+- L3 平倉需兩段式確認（一次性確認碼、10 秒 TTL），確認後自動送出所有緊急平倉單。
+- 系統自動觸發：斷線 / 資料過舊 → L1；`RECONCILIATION_ERROR` → L1 + 受影響 Trade 轉 FAILED 待人工；`CLOCK_UNRELIABLE` → 不觸發（只靠 Pre-Trade 逐筆阻擋）；L3 永不自動。
+
+完整子決議與理由見 §34 C-16、`risk-engine-kill-switch` design.md §6–7。
 
 Paper Trading 必須先驗證 Kill Switch。
 
@@ -1142,7 +1148,7 @@ Paper Trading 需要各交易所的 API Key / Secret（用途：取得帳戶實�
 | C-13 | 滑價重複扣除 | ✅ Net = Funding + Price − Fees；Slippage 僅歸因，UI 必須提示（§20） |
 | C-14 | Order 狀態 | ✅ 移除 CLOSED；Timeout 改為事件；補撤單失敗、ACK 逾時；`filled_quantity`（§9–10） |
 | C-15 | Trade 狀態機 | ✅ 重新定義並附中文名稱；UI 英文為主、`?` 顯示中文（§26） |
-| C-16 | Kill Switch | ⚠️ **待決**。問題：§23 的「按下 = 停止 + 撤單 + 評估 + 必要時平倉」是一個動作；技術書 §33 是三個獨立按鈕、預設只停止新交易。需要決定：(1) 按一次到底做到哪一層；(2) 撤單時「出場單 / 緊急平倉單」要不要一起撤（撤掉會讓部位留在市場上）；(3) 正在 ENTRY_PENDING / PARTIALLY_HEDGED 的 Trade，撤掉進場單後會變成單腿，要不要自動走緊急平倉；(4) 平倉是自動還是需人工確認；(5) 系統自動觸發（斷線、Reconciliation Error）時各對應哪一層 |
+| C-16 | Kill Switch | ✅ 2026-10-02 決議（三層分級，皆採 `risk-engine-kill-switch` design.md 推薦方案）：(1) 三層分級，高層包含低層——預設按鈕 L1 STOP ENTRY，再 L2 CANCEL ENTRY，再 L3 FLATTEN；(2) L2 只撤 `purpose='ENTRY'`，絕不撤 `EXIT`/`EMERGENCY_CLOSE`；(3) L2 撤單後變單腿的 Trade 自動依 §14 分類（0 成交→ABORTED；≥hedged_min→照常 HEDGED 出場；其餘→LEG_IMBALANCE→§15 自動緊急平倉）；(4) L3 需兩段式確認（一次性確認碼、10 秒 TTL）；(5) 自動觸發：斷線→L1、資料過舊→L1、`RECONCILIATION_ERROR`→L1+受影響 Trade 轉 FAILED 待人工、`CLOCK_UNRELIABLE`→不觸發（只靠 Pre-Trade 逐筆阻擋），L3 永不自動。詳見 §23、§34 下方實作要點與 `risk-engine-kill-switch` design.md §6 |
 | C-17 | 名目定義 | ✅ 單腿名目；ROI 分母 = 雙腿實際名目合計（§7） |
 | C-18 | Trade.mode | ✅ `'PAPER' \| 'BACKTEST'`，`'LIVE'` 保留 |
 
@@ -1150,4 +1156,4 @@ Paper Trading 需要各交易所的 API Key / Secret（用途：取得帳戶實�
 
 | ID | 議題 | 狀態 |
 |----|------|------|
-| C-19 | `hedge_ratio` 以 notional 計算會受兩所價差影響（數量相同也 < 100%）；建議改用合約乘數換算後的基礎資產數量 | ⚠️ 待決（§14） |
+| C-19 | `hedge_ratio` 以 notional 計算會受兩所價差影響（數量相同也 < 100%）；建議改用合約乘數換算後的基礎資產數量 | ✅ 2026-10-02 決議：改用合約乘數換算後的基礎資產數量（見 §14） |

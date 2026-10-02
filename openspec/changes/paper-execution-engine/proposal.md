@@ -15,14 +15,14 @@ Paper Trading 的驗證價值在於「模擬現實世界會失敗的情況」（
   - reduce-only close order（Cancel ≠ Close，Invariant #6）。
   - 模擬延遲（ACK / fill / cancel）與**可設 seed、可重現**的故障注入（技術書 §37）。
 - 雙腿執行（技術書 §17、§18；規格書 §13、§14）：hedge ratio 兩條門檻（`hedge_ratio_hedged_min` 0.99、`hedge_ratio_imbalance_below` 0.90、`partial_hedge_max_duration_ms` 5000，✅ C-12）、`PARTIALLY_HEDGED` 補足、`LEG_IMBALANCE` → Emergency Close（規格書 §15、技術書 §19）、正常平倉。
-- hedge ratio 公式與分類沿用 `position-accounting`（不重複實作），計算基準以設定 `hedge_ratio_basis: 'NOTIONAL' | 'QUANTITY'` 切換，預設 `NOTIONAL`（規格書 §14「決議前先用 notional」）；**⚠️ C-19 待決，不在本 change 決定**。
+- hedge ratio 公式與分類沿用 `position-accounting`（不重複實作），計算基準以設定 `hedge_ratio_basis: 'NOTIONAL' | 'QUANTITY'` 切換，**預設 `QUANTITY`**（✅ C-19 2026-10-02 已決議：合約乘數換算後的基礎資產數量，規格書 §14/§34）。
 - 所有時間經 `paper-trading-event-loop` 的 `Clock`；進場截止、`hedged_by`、鎖定區間、`exit_at` 由 `funding-settlement-rules` 決定，本 change 只呼叫其守門介面。
 - Scenario Test：技術書 §42 中屬執行層的 S01–S07、S10、S12、S13。
 
 ## Non-goals
 
 - 不建立任何真實交易所的下單 / 撤單端點或 `LiveExecutionEngine`（Invariant #1；階段 ⑤ 另立 change）。
-- 不決定 C-19（hedge ratio 基準）、不實作 Kill Switch（C-16）。
+- hedge ratio 基準已由 C-19 決議（`QUANTITY`），本 change 只套用；不實作 Kill Switch 本體（C-16 已決議三層分級，實作屬 `risk-engine-kill-switch` group 4）。
 - 不重新定義進場截止、鎖定區間、平倉時間（屬 `funding-settlement-rules`）或場次排程（`settlement-session`）。
 - 不計算 Position 平均價、Funding、PnL、TradeResult（屬 `position-accounting`、`pnl-engine`）；不估算手續費率與預期滑價（屬 `cost-model`）。
 - 不實作 Pre-Trade / Entry Risk 判斷（屬 `risk-engine`）；不實作 LIMIT 單的排隊位置模擬。
@@ -43,4 +43,4 @@ Paper Trading 的驗證價值在於「模擬現實世界會失敗的情況」（
 - **新增程式**：`runtime/src/execution/`（`executionInterface.ts`、`paperExecution.ts`、`matching.ts`、`failureInjection.ts`、`rng.ts`）、`runtime/src/trading/`（`entryCoordinator.ts`、`exitCoordinator.ts`）、`runtime/test/scenarios/`、`runtime/test/fakes/`（假盤口、假 guards、假 fee provider）。
 - **依賴**：`setup-vitest`；`trading-schema-types`（型別、轉換表、`makeTransitionEvent`）；`trading-event-store`（`Ledger`、`EventQueue`、`assertTraceability`）；`paper-trading-event-loop`（`Clock` / `VirtualClock`、`funding-settlement-rules` 守門）；`websocket-data-layer`（`market-data-stream` 盤口介面，測試用假盤口）；`instrument-registry`（step size、合約乘數；測試用假資料）；`net-cost-model`（`cost-model` 手續費率）；`position-funding-pnl`（`position-accounting`：腿部位、hedge ratio、`classifyHedge`）。
 - **設定**：`PaperTradingConfig`（技術書 §38）既有欄位 + 新增 `hedge_ratio_basis`、`execution_latency`、`failure_injection`、`market_order_time_in_force`、`cancel_retry_*`。
-- **對應**：規格書 §9–§17、§24、§25、§31（Partial Fill / Failure / Emergency Exit）；技術書 §2、§5、§13–§19、§37、§38、§42–§46；✅ C-12、C-14、C-17；⚠️ C-19；Invariant #1、#3、#6；HANDOFF P7、P8、B8。
+- **對應**：規格書 §9–§17、§24、§25、§31（Partial Fill / Failure / Emergency Exit）；技術書 §2、§5、§13–§19、§37、§38、§42–§46；✅ C-12、C-14、C-17、C-19；Invariant #1、#3、#6；HANDOFF P7、P8、B8。

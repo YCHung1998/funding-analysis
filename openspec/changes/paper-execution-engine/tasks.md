@@ -23,4 +23,4 @@
 ## 4. Scenario 與收尾
 
 - [ ] 4.1 `runtime/test/scenarios/`：S01、S02、S03、S04、S05、S06、S07、S10、S12、S13，每個結尾 `assertTraceability`
-- [ ] 4.2 執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate paper-execution-engine --strict` 全數通過並附輸出；更新 HANDOFF §7 交接紀錄（含 C-19 兩種比率的觀察方式）
+- [ ] 4.2 執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate paper-execution-engine --strict` 全數通過並附輸出；更新 HANDOFF §7 交接紀錄（註明 hedge_ratio_basis 預設已依 C-19 決議改為 `QUANTITY`，兩種比率仍同時記錄供對照）

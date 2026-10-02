@@ -7,7 +7,7 @@
   - `paper-execution`：`CREATED → SUBMITTED` 原子提交、Order / Trade 狀態推進、`ExecutionEngine` ARM / DISARM。
   - `trading-clock`：`Clock`、`CLOCK_UNRELIABLE` 狀態；`settlement-session`：接手恢復的持倉 Trade。
   - 狀態來源（以介面讀取，實作屬其他 change）：`market-data-stream`（連線、資料年齡）、`risk-engine`（ARMED）、`position-accounting`（`positions`）。
-- ⚠️ C-16：Kill Switch 分層未決；系統自動觸發（Reconciliation Error）時對應哪一層正是 C-16 子問題 (5)。本 change 只做「停止新進場」（技術書 §31「應同時觸發 STOP ENTRY」，屬 §33 第一層且為技術書已寫明的行為），不撤單、不平倉。
+- ✅ C-16（2026-10-02 已決議）：子問題 (5) 決議 `RECONCILIATION_ERROR` → L1 + 受影響 Trade 轉 FAILED 待人工，與本 change 原本的保守假設一致，無需修改。本 change 只做「停止新進場」（技術書 §31「應同時觸發 STOP ENTRY」，屬 §33 第一層），不撤單、不平倉——實際升級到 L1（而非只是停止進場的最小 latch）屬 `risk-engine-kill-switch` group 4 的範圍，待其實作後對接。
 
 ## Goals / Non-Goals
 
@@ -46,7 +46,7 @@
     reasons(): HaltRequest[];
   }
   ```
-  預設 `EntryHaltLatch`：寫 `ENTRY_HALT_REQUESTED`（同步帳本類，確保重啟後仍在），只有操作員動作（`ENTRY_HALT_CLEARED` 事件）能解除；解除的操作介面屬 `risk-engine-kill-switch` / `paper-trading-ui`。與 `risk-engine-kill-switch` 的接點：該 change 的 Risk Engine `ENTRY_GATE` 以「注入來源」接收 `ENTRY_HALT_REQUESTED`（其 design Open Question 9）；C-16 決議後若由 Kill Switch 統一轉為 L1，只需替換 `EntryHaltPort` 實作，本 change 行為不變。
+  預設 `EntryHaltLatch`：寫 `ENTRY_HALT_REQUESTED`（同步帳本類，確保重啟後仍在），只有操作員動作（`ENTRY_HALT_CLEARED` 事件）能解除；解除的操作介面屬 `risk-engine-kill-switch` / `paper-trading-ui`。與 `risk-engine-kill-switch` 的接點：該 change 的 Risk Engine `ENTRY_GATE` 以「注入來源」接收 `ENTRY_HALT_REQUESTED`（其 design Open Question 9）；C-16 已決議由 Kill Switch 統一轉為 L1，待該 change group 4 落地後只需替換 `EntryHaltPort` 實作，本 change 行為不變。
 - Database overflow（`EventQueue.getStatus().overflow`）也以 `source: 'DATABASE'` 請求停止進場。
 
 ### 3. Health 發佈：SQLite 單列
@@ -73,7 +73,7 @@
 ### 5. 重啟恢復
 
 - Paper 撮合狀態在記憶體，重啟即消失 → 未終態訂單一律以合法轉換關閉（SUBMITTED → REJECTED；ACKNOWLEDGED / PARTIALLY_FILLED → CANCEL_REQUESTED → CANCELED），保留已成交量；這是模擬交易所的「重啟 = 撤掉所有掛單」語意。
-- 進場中 / 失衡 / 緊急平倉中的 Trade → `FAILED` + 停止進場（需人工），**不**自動緊急平倉：自動平倉是 C-16 子問題 (3)(4)(5) 的範圍，決議前採最保守行為。
+- 進場中 / 失衡 / 緊急平倉中的 Trade → `FAILED` + 停止進場（需人工），**不**自動緊急平倉：C-16 已決議自動觸發只到 L1（不平倉），本 change 行為與決議一致，無需調整。
 - `HEDGED` / `EXIT_PENDING` → 交給 `settlement-session` 重新排程（`exit_at` 已過則立即平倉，屬正常出場，不是 Kill Switch 行為）。
 - 投影一致性：`rebuildProjections` 結果與現存列比對，差異走對帳 mismatch 流程。
 
@@ -93,7 +93,7 @@ server.ts                                        GET /api/runtime/health、/api/
 
 ## Risks / Trade-offs
 
-- [重啟把進場中 Trade 標 FAILED 可能留下裸部位] → 刻意保守（C-16 未決）；停止進場 + UI 顯示 + HANDOFF 記錄人工處理步驟。
+- [重啟把進場中 Trade 標 FAILED 可能留下裸部位] → 刻意保守，與 C-16 已決議的「自動觸發只到 L1、不自動平倉」一致；停止進場 + UI 顯示 + HANDOFF 記錄人工處理步驟。
 - [Health 單列覆寫無歷史] → 重要轉變已有 `RUNTIME_*` 與 `RECONCILIATION_ERROR` 事件；需要時日後加 health 歷史表。
 - [server 與 Runtime 時鐘不同] → 失聯閾值 3 倍間隔；兩者同機執行，偏差可忽略。
 - [SQLite 多 process 讀寫] → WAL 模式允許一寫多讀；server 唯讀連線不持有寫鎖。
@@ -106,7 +106,7 @@ server.ts                                        GET /api/runtime/health、/api/
 
 ## Open Questions
 
-1. **⚠️ C-16 (5)**：Reconciliation Error、重啟時進場中 Trade，是否應自動撤單 / 緊急平倉？本 change 只停止新進場並標 FAILED。
+1. ~~**⚠️ C-16 (5)**：Reconciliation Error、重啟時進場中 Trade，是否應自動撤單 / 緊急平倉？~~ ✅ 2026-10-02 已決議：不自動，只停止新進場並標 FAILED（與本 change 現行行為一致）。
 2. **停止進場的解除**：由誰、以什麼操作解除（`ENTRY_HALT_CLEARED`）？是否需要先通過一次對帳？
 3. **`FAILED` Trade 的保留資金**何時釋放（與 `paper-execution-engine` Open Question 5 相同）。
 4. **啟動步驟調整**（Decision 4 插入 2、3、8）是否同意回寫技術書 §39？

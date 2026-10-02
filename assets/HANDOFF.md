@@ -192,6 +192,13 @@ B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run che
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
 
+### 2026-10-02 — Claude (Opus 5.5)：C-16、C-19 決議
+- **做了什麼**：把規格書 §34 僅剩的兩個待決項（C-16 Kill Switch 分層、C-19 hedge ratio 計算基準）整理成選項，交由使用者逐項選擇；全數採用設計文件已準備的推薦方案。寫回：規格書 §23（Kill Switch 改為三層分級敘述）、§14（hedge_ratio 公式改用合約乘數換算後的基礎資產數量，並更新 §14.1 `hedged_min` 推導）、§34 決策紀錄（C-16、C-19 兩列皆標 ✅）；技術書 §33（Kill Switch 三層表格）；`risk-engine-kill-switch` design.md/tasks.md（group 4 解除 blocked-by C-16，Decision 6/7 標記已決議）；`position-funding-pnl`、`paper-execution-engine` 的 design/proposal/tasks 把 `hedge_ratio_basis` 預設從 `NOTIONAL` 改為 `QUANTITY`；`runtime-health-reconciliation` design.md 註記 C-16(5) 的決議結果與既有保守行為一致、無需修改；`paper-trading-ui` design/proposal 註記 C-16 已決議，三顆按鈕 UI 留待下一輪（不重開已完成的 task 3.6）；HANDOFF §8 第 5、6 項標 ✅。
+- **驗證證據**：純文件變更，未改程式邏輯，不需要跑測試；已交叉核對所有引用 C-16/C-19 的 design.md / proposal.md / tasks.md（`grep -rn "C-16\|C-19" openspec/changes/*/{design,proposal,tasks}.md`）逐一處理，僅 `net-cost-model`（已完成並整合）保留原文不動（歷史記錄不回改）。
+- **沒做完 / 已知問題**：決議只落在文件層級，尚未實作——`risk-engine-kill-switch` group 4（3 個任務）、`position-funding-pnl`/`paper-execution-engine` 的 `hedgeRatio.ts` 實際預設值、`paper-trading-ui` 的三顆按鈕 UI，皆待下一輪 apply。
+- **下一步建議**：下一輪可直接排 `risk-engine-kill-switch` group 4（現在不再 blocked）與 `position-funding-pnl` → `paper-execution-engine` → `runtime-health-reconciliation`；`paper-trading-ui` 的 Kill Switch 真實按鈕可在 `risk-engine-kill-switch` group 4 完成後一併排入。
+- **需要使用者決定的事**：無新增（C-16、C-19 已決議）；舊的非框架待定項（最低流動性門檻、`slippage_safety_buffer_pct`、`basis_sigma_pct`、`DEFAULT_FEE_TABLE` 官方查證、`research_min_net_pnl_usdt`）仍待提醒。
+
 ### 2026-10-01（7）— Claude Sonnet 5（`trading-event-store`，分支 `feature-trading-event-store`）
 - **做了什麼**：實作 OpenSpec change `trading-event-store`（capability `event-store`）tasks 1.1–5.1 全部完成：
   - 基礎：`runtime/src/storage/driver.ts`（`SqliteDriver` 介面 + `NodeSqliteDriver`，`node:sqlite` `DatabaseSync`，WAL + `foreign_keys=ON`，`transaction(fn)` 可重入（巢狀呼叫併入外層交易，只有最外層 BEGIN/COMMIT/ROLLBACK）、拒絕 async callback、`backupTo` 用 `VACUUM INTO`）；`runtime/src/storage/migrate.ts`（`migrate`/`rollback`/`currentVersion`，`schema_migrations` 表，每檔一 transaction）；`runtime/src/storage/backup.ts`（啟動前備份，UTC 檔名格式、`PRAGMA integrity_check`、同毫秒加 `-1`/`-2` 後綴、失敗丟 `BackupFailedError` 拒絕啟動、新安裝不備份）。`package.json` 加 `engines.node >=22.13`；`.gitignore` 加 `data/`。
@@ -327,5 +334,5 @@ B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run che
 2. ~~交易所範圍~~ ✅ 2026-09-30（C-01）：5 所持續掃描；Paper Trading 只在 Binance × Bybit，未來加 OKX；Pionex 僅掃描。
 3. **最低流動性門檻**：24h 量 / 盤口深度要多少以上才算「穩定交易量」？（仍待決）
 4. ~~是否導入 OpenSpec~~ ✅ 2026-09-30：已 `openspec init`；分支模型 `main` / `develop` / `feature-*`（技術書 §51）。
-5. **Kill Switch 分層**：規格書 C-16（5 個子問題）。
-6. **Hedge ratio 以數量或名目計算**：規格書 C-19。
+5. ~~Kill Switch 分層~~ ✅ 2026-10-02（C-16）：三層分級（L1 STOP ENTRY / L2 CANCEL ENTRY / L3 FLATTEN），5 個子問題皆採推薦方案，見規格書 §23、§34、`risk-engine-kill-switch` design.md §6–§7。
+6. ~~Hedge ratio 以數量或名目計算~~ ✅ 2026-10-02（C-19）：改用合約乘數換算後的基礎資產數量（`QUANTITY`），見規格書 §14、§34。

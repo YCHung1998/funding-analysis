@@ -15,7 +15,7 @@
 
 ## Non-goals
 
-- 不實作 Kill Switch 及其分層（⚠️ C-16，屬 `risk-engine-kill-switch`）；本 change 只提供「對帳失敗時請求停止新進場」的 `EntryHaltPort` 與暫用的最小 latch，**不**撤單、**不**自動平倉。
+- 不實作 Kill Switch 本體（C-16 已決議三層分級，實作屬 `risk-engine-kill-switch` group 4）；本 change 只提供「對帳失敗時請求停止新進場」的 `EntryHaltPort` 與暫用的最小 latch，**不**撤單、**不**自動平倉。
 - 不實作前端畫面（屬 `paper-trading-ui`）、不提供任何控制類 POST 端點。
 - 不實作市場資料連線、Scanner、Risk Engine 本身（只讀它們的狀態）。
 - 不定義場次排程恢復（屬 `settlement-session`）；本 change 只把恢復的 Trade 交給它。
@@ -37,5 +37,5 @@
 - **新增程式**：`runtime/src/reconciliation/`、`runtime/src/health/`、`runtime/src/main.ts`（啟動流程）、`runtime/src/storage/migrations/002_runtime_health.ts`（可逆）。
 - **修改程式**：`server.ts` 新增兩個唯讀 GET 路由（以 `node:sqlite` `readOnly` 開啟 DB），不改既有路由。
 - **設定**：`package.json` 新增 `runtime` script（`tsx runtime/src/main.ts`）；`PaperTradingConfig` 新增 `reconciliation_interval_ms`、`health_publish_interval_ms`、`reconciliation_qty_epsilon`、`reconciliation_usdt_epsilon`。
-- **依賴**：`setup-vitest`、`trading-schema-types`、`trading-event-store`、`paper-execution-engine`、`paper-trading-event-loop`（`Clock` 健康、`settlement-session`）；讀取 `position-accounting`（positions）、`market-data-stream`（連線 / 資料年齡）、`risk-engine`（Risk 狀態）的狀態介面；`kill-switch`（C-16）日後實作 `EntryHaltPort`。
-- **對應**：規格書 §12、§26.2（FAILED）、§31 Failure / Traceability、§33；技術書 §3、§12、§31、§32、§35、§39、§48.3、§48.4、§52；✅ C-06、C-08；⚠️ C-16；Invariant #1、#2。
+- **依賴**：`setup-vitest`、`trading-schema-types`、`trading-event-store`、`paper-execution-engine`、`paper-trading-event-loop`（`Clock` 健康、`settlement-session`）；讀取 `position-accounting`（positions）、`market-data-stream`（連線 / 資料年齡）、`risk-engine`（Risk 狀態）的狀態介面；`kill-switch`（`risk-engine-kill-switch` group 4，C-16 已決議）日後實作 `EntryHaltPort`。
+- **對應**：規格書 §12、§26.2（FAILED）、§31 Failure / Traceability、§33；技術書 §3、§12、§31、§32、§35、§39、§48.3、§48.4、§52；✅ C-06、C-08、C-16；Invariant #1、#2。

@@ -9,7 +9,7 @@
 
 ## 2. Hedge ratio 與 imbalance（position-accounting）
 
-- [ ] 2.1 `hedgeRatio`：`NOTIONAL` / `QUANTITY` 可切換（預設 `NOTIONAL`，C-19 未決）、0.30 / 0.995025 vs 1.0 / 合約乘數案例、`notional_ratio` / `quantity_ratio` 同時回傳、`classifyHedge`（邊界 0.99、0.90、tier 覆寫）；與 `paper-execution-engine` 的 `hedgeRatio.ts` 收斂為單一實作（該 change 改為 import，或本 change 沿用其實作並補測試），不重複發 `HEDGE_RATIO_CHANGED`
+- [ ] 2.1 `hedgeRatio`：`NOTIONAL` / `QUANTITY` 可切換（預設 `QUANTITY`，✅ C-19 2026-10-02 已決議）、0.30 / 0.995025 vs 1.0 / 合約乘數案例、`notional_ratio` / `quantity_ratio` 同時回傳、`classifyHedge`（邊界 0.99、0.90、tier 覆寫）；與 `paper-execution-engine` 的 `hedgeRatio.ts` 收斂為單一實作（該 change 改為 import，或本 change 沿用其實作並補測試），不重複發 `HEDGE_RATIO_CHANGED`
 - [ ] 2.2 Leg imbalance 量測：`leg_imbalance_usdt`、`max_leg_imbalance_usdt`、`max_leg_imbalance_duration_ms`（補足案例 1000 / 800 ms、緊急平倉案例 1000 / 5,200 ms）
 
 ## 3. FundingSettlement 金額（pnl-engine）
@@ -26,4 +26,4 @@
 
 ## 5. 收尾
 
-- [ ] 5.1 更新文件（規格書 §14 註明 `hedge_ratio_basis` 切換設定但 C-19 仍待決、§21 欄位計算方式；技術書 §20–§23、§38 新設定欄位）；執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate position-funding-pnl --strict` 全數通過並附輸出；更新 HANDOFF §7 交接紀錄
+- [ ] 5.1 更新文件（規格書 §14 註明 `hedge_ratio_basis` 預設已改 `QUANTITY`（C-19 已決議）、§21 欄位計算方式；技術書 §20–§23、§38 新設定欄位）；執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate position-funding-pnl --strict` 全數通過並附輸出；更新 HANDOFF §7 交接紀錄

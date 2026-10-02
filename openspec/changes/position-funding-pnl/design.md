@@ -5,7 +5,7 @@
 - 已存在的上游：
   - `net-cost-model`（`cost-model`）：`fundingCashflow`、`composeNetPnl`、`slippageAttribution`、`feeForFill`——本 change 的所有金額公式都呼叫它們。
   - `paper-trading-event-loop`（`funding-settlement-rules`，design Decision 6）：FundingSettlement 狀態 `EXPECTED → ELIGIBLE → SETTLED / NOT_ELIGIBLE / MISSED`、鎖定區間、`exit_at` 不等確認、`funding_confirmed` / `finalized_at` 定案規則。**本 change 只實作金額與帳務，不重新定義狀態。**
-- 待決：⚠️ C-19（hedge ratio 基準）、⚠️ C-16（Kill Switch）。
+- ✅ C-19（hedge ratio 基準＝`QUANTITY`）、✅ C-16（Kill Switch 三層分級）已於 2026-10-02 決議，見規格書 §14/§23/§34。
 - 限制：HANDOFF §3 Invariants；規格書 §25（所有實體有 `created_at` / `updated_at`、每次狀態轉換產生 TradingEvent、事件時間 ≠ 寫入時間）。
 
 ## Goals / Non-Goals
@@ -70,22 +70,21 @@ applied_fill_ids: string[];         // 冪等用（亦可改由 fills 表查詢�
 - **參考價**：滑價歸因使用 Fill 所屬訂單的 `reference_price`（`paper-execution` 的 `OrderRequest.reference_price`；規格書 §16）。不使用 `Fill.slippage_from_reference_pct`（該欄位為百分比、正值 = 較差，與歸因 USDT / 負值 = 成本不同口徑）。
 - **替代方案**：FIFO lot 會計 → 單次結算、單向開平倉的情境下與加權平均結果相同，但實作與儲存較複雜，否決。
 
-### 4. Hedge ratio：可切換基準（⚠️ C-19 未決）
+### 4. Hedge ratio：可切換基準（✅ C-19 2026-10-02 已決議為 `QUANTITY`）
 
 ```typescript
-type HedgeRatioBasis = 'NOTIONAL' | 'QUANTITY';          // PaperTradingConfig.hedge_ratio_basis，預設 'NOTIONAL'（與 paper-execution 同一設定）
+type HedgeRatioBasis = 'NOTIONAL' | 'QUANTITY';          // PaperTradingConfig.hedge_ratio_basis，預設 'QUANTITY'（與 paper-execution 同一設定）
 computeHedgeRatio(long, short, basis) → { hedge_ratio, basis, long_value, short_value, notional_ratio, quantity_ratio, has_exposure }
 hedge_ratio = min(long_value, short_value) / max(long_value, short_value)
   NOTIONAL:      value = base_quantity × average_entry_price
   QUANTITY: value = base_quantity                    // 已乘合約乘數
 ```
 
-- **預設 `NOTIONAL` 不是本 change 的決定**，而是照規格書 §14「決議前先用 notional」；§14.1 的 0.99 預設已預留價差誤差。
-- 兩種實作都在本 change 完成並測試；C-19 決議後只改設定（產生新 `config_version`，規格書 §14.3 第 5 點），並回頭調整 §14.1 的 `hedged_min` 建議值。
-- `NOTIONAL` 使用**成交均價**而非即時 mark：分類發生在進場瞬間，均價即可代表當時的對沖狀態，且結果可由 Fill 重播確定性重建。
-- **與 `paper-execution-engine` 的重疊**：該 change（平行撰寫）的 tasks 3.1 也規劃 `hedgeRatio.ts`（基準 `NOTIONAL` / `QUANTITY`，並在 `HEDGE_RATIO_CHANGED` 同時記錄兩種比率）。兩者語意一致：進場期間 `NOTIONAL` 的 `open base qty × average_entry_price` = Σ 開倉 `Fill.notional_usdt`。本 change 要求收斂為**單一實作**（建議放在 `trading/hedgeRatio.ts`，由先合併者建立、後合併者 import 並沿用測試）；`HEDGE_RATIO_CHANGED` 由雙腿協調者（`paper-execution`）發出一次，positionManager 不發。
+- **預設改為 `QUANTITY`**：C-19 已決議改用合約乘數換算後的基礎資產數量計算（規格書 §14、§34）；`NOTIONAL` 實作保留（供對照與既有 Paper 資料相容），但不再是預設。
+- 兩種實作仍都在本 change 完成並測試；§14.1 的 `hedged_min` 建議值已依新基準調整（跨所價差不再是誤差來源，只剩 step size）。
+- `QUANTITY` 使用**成交數量 × 合約乘數**（非 notional）：分類發生在進場瞬間，累計基礎資產數量即可代表當時的對沖狀態，且結果可由 Fill 重播確定性重建。
+- **與 `paper-execution-engine` 的重疊**：該 change（平行撰寫）的 tasks 3.1 也規劃 `hedgeRatio.ts`（基準 `NOTIONAL` / `QUANTITY`，並在 `HEDGE_RATIO_CHANGED` 同時記錄兩種比率）。本 change 要求收斂為**單一實作**（建議放在 `trading/hedgeRatio.ts`，由先合併者建立、後合併者 import 並沿用測試）；`HEDGE_RATIO_CHANGED` 由雙腿協調者（`paper-execution`）發出一次，positionManager 不發。
 - `classifyHedge` 只回傳 `HEDGED` / `PARTIALLY_HEDGED` / `LEG_IMBALANCE`；「何時轉換、是否重送剩餘量、何時緊急平倉」屬 Trade Manager（規格書 §14.2）與 `funding-settlement-rules`（`hedged_by` 未 HEDGED → LEG_IMBALANCE）。
-- **替代方案**：直接改用 base quantity → 等於替使用者決定 C-19，否決。
 
 ### 5. Leg imbalance 量測
 
@@ -122,7 +121,7 @@ roi_on_capital_pct         = net / allocated_capital_usdt × 100                
 
 - **暫定 → 定案**：Trade 進入終態即建立 TradeResult（`funding_confirmed = false`），讓 UI 能顯示「已平倉 · 待入帳」（event-loop Decision 6）；所有腿結算終態後設定 `finalized_at`，`funding_confirmed` = 全部為 `SETTLED` / `NOT_ELIGIBLE`；定案產生一筆 `TRADE_COMPLETED`（技術書 §26；對應 §43 最後一步「PnL Finalized」）。定案後不再自動修改。
 - **ABORTED 的定案時間**：零成交的 Trade 其 FundingSettlement 會在 `lock_end` 轉 `NOT_ELIGIBLE`（event-loop 規則），因此最早在 T+15s 定案；這是沿用規則的結果，不另設捷徑。
-- **final_status**：`ABORTED` / `FAILED` / `EMERGENCY_EXIT` 優先，其餘依 `break_even_tolerance_usdt`（預設 0.01）分 `PROFIT` / `LOSS` / `BREAK_EVEN`。`close_reason = 'KILL_SWITCH'` 暫依淨值分類、`result_reason = 'KILL_SWITCH'`（⚠️ C-16 決議後可能調整，列 Open Question）。
+- **final_status**：`ABORTED` / `FAILED` / `EMERGENCY_EXIT` 優先，其餘依 `break_even_tolerance_usdt`（預設 0.01）分 `PROFIT` / `LOSS` / `BREAK_EVEN`。`close_reason = 'KILL_SWITCH'` 暫依淨值分類、`result_reason = 'KILL_SWITCH'`（C-16 已決議三層分級，但是否需要調整本 change 的分類方式仍列 Open Question，待 `risk-engine-kill-switch` group 4 落地後核對）。
 - **Durations**：由 Trade 的時間戳計算（規格書 §25 衍生指標）。
 
 ### 8. 事件與持久化
@@ -165,8 +164,8 @@ roi_on_capital_pct         = net / allocated_capital_usdt × 100                
 
 ## Open Questions
 
-1. **⚠️ C-19**：hedge ratio 以 `NOTIONAL` 或 `QUANTITY`（合約乘數換算後的基礎資產數量）計算？本 change 兩者都實作、預設依規格書 §14 暫用 `NOTIONAL`；決議後只需改 `hedge_ratio_basis` 並檢討 §14.1 的 `hedged_min` 建議值。
+1. ~~**⚠️ C-19**：hedge ratio 以 `NOTIONAL` 或 `QUANTITY`計算？~~ ✅ 2026-10-02 已決議：`QUANTITY`（合約乘數換算後的基礎資產數量），見本檔 §4、規格書 §14/§34。`NOTIONAL` 實作保留供對照。
 2. `MISSED` 的腿在定案結果中計 0（保守）是否可接受？或應以 `expected_cashflow_usdt` 暫計並標示？
-3. `close_reason = 'KILL_SWITCH'` 的 `final_status` 對應方式待 ⚠️ C-16 決議；目前依淨值分類、`result_reason = 'KILL_SWITCH'`。
+3. `close_reason = 'KILL_SWITCH'` 的 `final_status` 對應方式——C-16 已決議三層分級（見規格書 §23/§34），但本 change 目前仍依淨值分類、`result_reason = 'KILL_SWITCH'`；`risk-engine-kill-switch` group 4 實作後需回頭核對是否一致。
 4. `break_even_tolerance_usdt` 預設 0.01 USDT 是否合適？
 5. 零成交 ABORTED 的 TradeResult 必須等到 `lock_end` 才定案（沿用結算規則）——若使用者希望立即定案，需在 `funding-settlement-rules` 增加「零持倉直接 NOT_ELIGIBLE」規則（屬 event-loop，不在本 change 修改）。

@@ -14,13 +14,13 @@ Paper Trading Runtime 會把每一筆 Trade（成功、失敗、未成交、撤�
 - **滑價防呆（C-13、規格書 §20.1）**：共用 `SlippageAttribution` 元件以歸因樣式顯示並標「已含在 Price PnL 中，不另外扣除」；損益瀑布圖中 Slippage 是 Price PnL 的子項；`?` 說明 `Net = Funding + Price − Fees`。
 - **Runtime Health 面板**（技術書 §32）與**即時事件串流**（技術書 §34）：資料來自 `server.ts` 唯讀 REST 與 WebSocket 轉發；斷線 / 資料過舊時明確標示，不顯示假的「RUNNING」。
 - **資料層**：型別化唯讀 client（`AbortController`、請求代號比對，杜絕 FE-01 的 stale closure / 亂序覆寫）與 WebSocket hook（重連、依序號補抓、有界緩衝）；Runtime API 尚未就緒時可切換到 **明確標示的 mock 資料源**（HANDOFF Invariant #7）。
-- **Kill Switch 控制區**：只預留 UI 位置與「控制指令經 `server.ts` 轉交 Runtime、Runtime 自行驗證」的 client 通道；按鈕停用並標示 **blocked-by C-16**。
+- **Kill Switch 控制區**：只預留 UI 位置與「控制指令經 `server.ts` 轉交 Runtime、Runtime 自行驗證」的 client 通道；按鈕停用並標示 **blocked-by C-16**（C-16 已於 2026-10-02 決議為三層分級，三顆按鈕的實作排入下一輪，不在本 change 追加範圍）。
 - **文件**：README §4（mock / live 對照）新增 Paper Trading 列；HANDOFF §7 交接紀錄。
 
 ## Non-goals
 
 - 不實作 `server.ts` 的 Paper 唯讀 API / WebSocket 轉發、SQLite schema、術語表內容（分屬 `trading-schema-storage`、`runtime-health-reconciliation`）；本 change 只消費其契約，契約列於 design「跨 change 假設」。
-- 不實作 Kill Switch 行為（C-16 待決）；不送出任何控制指令。
+- 不實作 Kill Switch 行為本體（C-16 已決議，實作屬 `risk-engine-kill-switch` group 4 + 下一輪 UI 工作）；不送出任何控制指令。
 - 不讓 UI 計算或決定任何交易狀態、PnL、Hedge Ratio、Funding（技術書 §48.3）；UI 只格式化 Runtime 給的值。
 - 不修改 Dry-Run Console / Execution Simulator 的功能與資料流（§1.1 凍結）；不處理 FE-02、FE-03、FE-05、FE-07；不把既有 9 個分頁全部改為 lazy（FE-06 其餘部分另立 change）。
 - 不新增啟動 / 停止 Runtime、修改 `PaperTradingConfig` 的 UI（未有規格）。
@@ -41,4 +41,4 @@ Paper Trading Runtime 會把每一筆 Trade（成功、失敗、未成交、撤�
 - **新增程式**：`src/features/paperTrading/`（分頁元件、資料 client、WebSocket hook、mock fixtures、共用顯示元件）與對應 `*.test.tsx`。
 - **修改程式**：`src/App.tsx`（新分頁 lazy 掛載）、`src/components/Header.tsx`（`ActiveTab` 加 `'paper'`、標籤與凍結標示）、`src/components/HelpModal.tsx`（`HELP_DICTIONARY` 新增 `paper` 條目）。不改 `server.ts`、`runtime/`。
 - **依賴**：`setup-vitest`（必須先完成，含 jsdom 與 React Testing Library；若未包含則本 change 以 `--legacy-peer-deps` 補 devDependency）；`trading-schema-storage`（`runtime/src/types/` 型別與 `glossary.ts`、Paper 唯讀 API）；`runtime-health-reconciliation`（Health API、WebSocket 事件轉發）。後兩者未合併前以 mock 資料源開發與驗收 UI，真實串接列為合併後驗證項。
-- **對應**：規格書 §1.1、§6–§8、§9、§18、§20.1、§21、§24、§26、§27、§28、§32（DoD）、C-13、C-15、C-16（blocked）、C-17；技術書 §3、§27.1、§32、§33、§34、§35、§48.1–48.4；HANDOFF Invariant #1、#2、#7；issue FE-01、FE-04、FE-06。
+- **對應**：規格書 §1.1、§6–§8、§9、§18、§20.1、§21、§24、§26、§27、§28、§32（DoD）、C-13、C-15、C-16（已決議，UI 待下一輪）、C-17；技術書 §3、§27.1、§32、§33、§34、§35、§48.1–48.4；HANDOFF Invariant #1、#2、#7；issue FE-01、FE-04、FE-06。

@@ -27,11 +27,11 @@
 - [x] 3.3 Position Risk 6 項（`POSITION_IMBALANCE`、`MARK_PRICE_MOVEMENT`、`BASIS_DIVERGENCE`、`FUNDING_CHANGE`（`hedged_by` 前後行為不同）、`HOLDING_TIME`、`EXIT_CONDITION`）與 `EMERGENCY_EXIT` 請求；此時 1.1 的覆蓋率測試必須全綠
   - 證據：`runtime/src/risk/positionRisk.ts` + `positionRisk.test.ts`（6 項）、`PositionRiskMonitor`（`riskCoordinator.ts`）+ `riskCoordinator.test.ts`；`npx vitest run runtime/src/risk/checks/coverage.test.ts` 全綠（127/127 風控測試皆綠）。同 3.2，`position_risk_interval_ms` 的排程呼叫未接線，原因相同。
 
-## 4. Kill Switch（kill-switch）— ⚠️ blocked-by C-16
+## 4. Kill Switch（kill-switch）— ✅ C-16 已於 2026-10-02 決議，不再 blocked，可於下一輪 apply
 
-- [ ] 4.1 （blocked-by C-16）依決議修正 `kill-switch` spec 並更新規格書 §23 / §31 / §34、技術書 §26 / §33；於 `TradingEventType` 與術語表加入 `KILL_SWITCH_*` 事件碼；實作層級狀態機（只升不降、手動解除、清理中拒絕解除）、`KILL_SWITCH_*` 事件、由事件重建狀態、向 `ENTRY_GATE` 注入 `KILL_SWITCH_ACTIVE`、L1 行為（`CREATED` / `PRE_FLIGHT` → `ABORTED`，進行中 Trade 與補足單不受影響）
-- [ ] 4.2 （blocked-by C-16）L2 只撤 `ENTRY` 單（絕不撤 `EXIT` / `EMERGENCY_CLOSE`）、撤單重試與 `KILL_SWITCH_CANCEL_FAILED`、撤單後依 §14 分類（0 成交 → ABORTED；≥ hedged_min → HEDGED；其餘 → LEG_IMBALANCE → §15，`close_reason = 'KILL_SWITCH'`）
-- [ ] 4.3 （blocked-by C-16）L3 兩段式確認（一次性確認碼、TTL、逾時 / 錯誤拒絕）與全部平倉（保留既有出場單、鎖定區間 → `NOT_ELIGIBLE`）；自動觸發（斷線 / 資料持續過舊 → L1；`RECONCILIATION_ERROR` → L1 + Trade `FAILED`；已啟動時只記 `KILL_SWITCH_TRIGGERED`）；Scenario S11
+- [ ] 4.1 依決議（design.md §6–§7，全採推薦方案）修正 `kill-switch` spec 並更新規格書 §23 / §34、技術書 §33（已由整合者先行改寫，見本輪 HANDOFF）；於 `TradingEventType` 與術語表加入 `KILL_SWITCH_*` 事件碼；實作層級狀態機（只升不降、手動解除、清理中拒絕解除）、`KILL_SWITCH_*` 事件、由事件重建狀態、向 `ENTRY_GATE` 注入 `KILL_SWITCH_ACTIVE`、L1 行為（`CREATED` / `PRE_FLIGHT` → `ABORTED`，進行中 Trade 與補足單不受影響）
+- [ ] 4.2 L2 只撤 `ENTRY` 單（絕不撤 `EXIT` / `EMERGENCY_CLOSE`）、撤單重試與 `KILL_SWITCH_CANCEL_FAILED`、撤單後依 §14 分類（0 成交 → ABORTED；≥ hedged_min → HEDGED；其餘 → LEG_IMBALANCE → §15，`close_reason = 'KILL_SWITCH'`）
+- [ ] 4.3 L3 兩段式確認（一次性確認碼、TTL、逾時 / 錯誤拒絕）與全部平倉（保留既有出場單、鎖定區間 → `NOT_ELIGIBLE`）；自動觸發（斷線 / 資料持續過舊 → L1；`RECONCILIATION_ERROR` → L1 + Trade `FAILED`；`CLOCK_UNRELIABLE` 不觸發；已啟動時只記 `KILL_SWITCH_TRIGGERED`）；Scenario S11
 
 ## 5. 收尾
 

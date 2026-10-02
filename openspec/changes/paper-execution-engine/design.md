@@ -1,7 +1,7 @@
 ## Context
 
 - 技術書 §2：只有 Execution Adapter 與真實交易不同；§46：`ExecutionEngine` 讓 Strategy 不知道是 Paper 還是 Live。
-- 狀態機 ✅ C-14（規格書 §9–§10）、hedge ratio 門檻 ✅ C-12（§14）、名目定義 ✅ C-17；hedge ratio 基準 ⚠️ C-19 待決。
+- 狀態機 ✅ C-14（規格書 §9–§10）、hedge ratio 門檻 ✅ C-12（§14）、名目定義 ✅ C-17；hedge ratio 基準 ✅ C-19（2026-10-02 決議為 `QUANTITY`）。
 - 上游契約：
   - `trading-schema`：`PaperOrder`、`Fill`、`Trade`、`TradeLeg`、轉換表、`transitionEventType`、`makeTransitionEvent`。
   - `event-store`：`Ledger.applyOrderTransition` / `applyFill` / `releaseCapital`（同步 commit），`EventQueue`（`HEDGE_RATIO_CHANGED` 等觀測事件），`assertTraceability`。
@@ -13,7 +13,7 @@
 
 **Goals:** 可替換的執行介面；貼近現實且可重現的 Paper 撮合；雙腿進場 / 緊急平倉 / 正常平倉的狀態推進；執行層 Scenario Test。
 
-**Non-Goals:** Live adapter、C-19 決議、Kill Switch、Position / PnL 計算、Risk 判斷、時間窗口規則定義。
+**Non-Goals:** Live adapter、Kill Switch 本體（C-16 已決議三層分級，實作屬 `risk-engine-kill-switch` group 4）、Position / PnL 計算、Risk 判斷、時間窗口規則定義。
 
 ## Decisions
 
@@ -65,12 +65,11 @@ type GuardResult = { allowed: true } | { allowed: false; reason: string };
 - `PARTIALLY_HEDGED`：以落後量（依目前基準換算為數量，向下取整到 step size）重送 ENTRY 單；重送前檢查 `canSubmitEntry`。
 - 單腿 REJECTED 不重試（v1），直接走分類；是否重試列 Open Question。
 
-### 5. hedge ratio 基準可切換（C-19）
+### 5. hedge ratio 基準可切換（✅ C-19 2026-10-02 已決議為 `QUANTITY`）
 
 - 公式與分類只有一份實作：`position-accounting`（position-funding-pnl）的 hedge ratio 與 `classifyHedge`，本 change 只呼叫並執行門檻對應的行為（補單、計時、緊急平倉）。**替代方案** 執行層自算 → 兩份公式口徑可能分裂，否決。
-- 設定 `hedge_ratio_basis: 'NOTIONAL' | 'QUANTITY'`（與 position-accounting 共用同一欄位），預設 `NOTIONAL`（規格書 §14 暫行規定）。
-- 每筆 `HEDGE_RATIO_CHANGED` 同時記錄兩種基準的值（`payload.notional_ratio`、`payload.quantity_ratio`），讓使用者用 Paper 資料評估 C-19，而不需重跑。
-- **不在本 change 決定預設要不要改**。
+- 設定 `hedge_ratio_basis: 'NOTIONAL' | 'QUANTITY'`（與 position-accounting 共用同一欄位），**預設改為 `QUANTITY`**（C-19 決議：合約乘數換算後的基礎資產數量）。
+- 每筆 `HEDGE_RATIO_CHANGED` 仍同時記錄兩種基準的值（`payload.notional_ratio`、`payload.quantity_ratio`），供事後對照。
 
 ### 6. Trade / Leg 狀態推進與資金
 
@@ -96,9 +95,9 @@ runtime/test/scenarios/S01…S13.test.ts
 ## Risks / Trade-offs
 
 - [不扣除自己吃掉的盤口量，連續重撮可能高估成交] → 同一 order 的剩餘量只在**新快照**到達時重撮；日後可加「自身影響衰減」模型。
-- [只用 NOTIONAL 預設會讓價差大的配對卡在 PARTIALLY_HEDGED] → 規格書 §14.1 預設 0.99 已預留；兩種比率都記錄，供 C-19 決議。
+- [NOTIONAL 預設會讓價差大的配對卡在 PARTIALLY_HEDGED] → C-19 已決議改用 `QUANTITY`，此風險已排除；`NOTIONAL` 僅保留供對照，兩種比率仍都記錄。
 - [故障注入使測試不穩定] → 一律固定 seed；決定性測試比對兩次執行的事件序列。
-- [`FAILED` 不釋放資金可能讓可用資金偏低] → 刻意偏保守；人工處理流程屬 `risk-engine-kill-switch`（C-16）。
+- [`FAILED` 不釋放資金可能讓可用資金偏低] → 刻意偏保守；人工處理流程屬 `risk-engine-kill-switch`（C-16 已決議三層分級，group 4 待實作）。
 - [上游 port 尚未實作] → 全部以 fake 測試；介面形狀若與上游 change 不同，於整合時以 adapter 對接，不改本 capability 行為。
 
 ## Migration Plan
@@ -107,9 +106,9 @@ runtime/test/scenarios/S01…S13.test.ts
 
 ## Open Questions
 
-1. **⚠️ C-19**：hedge ratio 以名目或數量計算？本 change 做成 `hedge_ratio_basis` 可切換、預設 `NOTIONAL`，並同時記錄兩種比率；請使用者決議後只改設定預設值。
+1. ~~**⚠️ C-19**：hedge ratio 以名目或數量計算？~~ ✅ 2026-10-02 已決議：`QUANTITY`（合約乘數換算後的基礎資產數量），`hedge_ratio_basis` 預設已改。
 2. `Fill.liquidity` 的 `'SIMULATED'` 何時使用？本 change 對 MARKET 一律記 `'TAKER'`（費率依據）。
 3. 單腿 `REJECTED` 是否應重試一次再走 LEG_IMBALANCE？v1 不重試。
 4. `EXIT_PENDING` 超時卡住時，規格書 §26.2 沒有 `EXIT_PENDING → EMERGENCY_EXIT` 轉換；本 change 超過 `emergency_exit_timeout_ms` 轉 `FAILED`（`EXIT_TIMEOUT`）。是否應新增 `EXIT_PENDING → EMERGENCY_EXIT`？
-5. `FAILED` Trade 的保留資金何時釋放——人工確認後由 Kill Switch / 管理流程處理（牽涉 C-16）。
+5. `FAILED` Trade 的保留資金何時釋放——C-16 已決議三層分級，待 `risk-engine-kill-switch` group 4 落地後接上人工確認流程。
 6. `ExecutionEngine.onOrderUpdate` 為技術書 §46 的補充，是否同意回寫技術書？

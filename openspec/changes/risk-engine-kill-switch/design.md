@@ -4,7 +4,7 @@
 - **上位規格**：規格書 §22（三階段清單）、§23（Kill Switch，⚠️ C-16）、§14 / §15（hedge ratio 門檻與緊急流程）、§25（時間戳）、§26（狀態機）；技術書 §8（資料年齡）、§11（Pre-Flight）、§12（資金保留）、§31（對帳 → STOP ENTRY）、§32（Runtime Health）、§33（Kill Switch 三動作，⚠️ C-16）、§37（failure injection）、§38（設定）、§42（S09–S12）。
 - **已存在的 change**：`paper-trading-event-loop` 定義場次階段（ARM 為最終進場決策點）、`entry_deadline` / `hedged_by` / 鎖定區間、Opportunity 失效規則、`trading-clock` 的時鐘健康判定與 `CLOCK_UNRELIABLE`。本 change 引用、不重複定義。
 - **限制**：HANDOFF §3 Invariants——不下真實單（#1）；憑證不進事件 payload（#2，`actor` 欄位只放操作者識別）；檢查邏輯不得依交易所名稱分支（#3，所有門檻來自設定、所有交易所差異來自注入的輸入）；費率一律小數（#5）；Cancel ≠ Close（#6，Kill Switch 的平倉一律是新的 `reduce_only` `EMERGENCY_CLOSE` 訂單）。規格書 §25：每個持久化實體有 `created_at` / `updated_at`，每次狀態轉換產生 TradingEvent。
-- **⚠️ C-16 未決**：Kill Switch 部分（Decision 6、7）依推薦方案撰寫，**待 C-16 決議，決議後可能修改**。
+- **✅ C-16 已決議（2026-10-02）**：Decision 6、7 的推薦方案已由使用者確認採用，無需修改，可直接依下方 §6–§7 開工（group 4 不再 blocked）。
 
 ## Goals / Non-Goals
 
@@ -13,11 +13,11 @@
 - 三階段 Risk Engine 的 28 個檢查項目：每一項有公式、門檻來源、`reason_code`、FAIL 情境與自動化測試。
 - 純函式評估器：輸入快照 + 設定 → 結果，可在 VirtualClock 與錄製資料下重現（Paper 與 Backtest 共用）。
 - 與 event-loop 的呼叫契約（ARM、PRE_FLIGHT、ENTRY、持倉期間）。
-- 把 C-16 的五個子問題整理成可選擇的選項並附推薦，供使用者決議；Kill Switch 規格先依推薦方案寫好，決議後修正即可開工。
+- ~~把 C-16 的五個子問題整理成可選擇的選項並附推薦，供使用者決議~~ ✅ 2026-10-02 使用者已採用推薦方案，Kill Switch 規格按本檔 §6–§7 開工即可。
 
 **Non-Goals:**
 
-- 替使用者決定 C-16、C-19。
+- 替使用者決定 C-19（hedge ratio 基準已由規格書 §14 / §34 另行決議為 QUANTITY，本 change 不重複處理）。
 - Trade / Order / Opportunity 狀態機本體、§14 門檻的狀態轉換、補單、§15 下單流程（`paper-execution`、`opportunity-lifecycle`）。
 - 資金保留原子操作與 hedge ratio 計算（`position-accounting`）；成本 / 滑價估算（`cost-model`）；斷線、資料過舊與對帳的**偵測**（`runtime-health`、`market-data-stream`、`reconciliation`）；Kill Switch 按鈕 UI（`paper-trading-ui`）。
 - 修改研究原型 `dryRunEngine.ts`（階段 ② 凍結）。
@@ -130,9 +130,9 @@ HEDGED / EXIT_PENDING ──▶ Position 6 項 ──▶ EMERGENCY_EXIT 請求 �
 - 由 event-loop 判斷、本 change 只引用：`SPREAD_FLIPPED`、Opportunity 失效、場次資格、`ENTRY_DEADLINE_PASSED`、`NOT_HEDGED_BEFORE_WINDOW`、`LOCK_WINDOW`、`exit_at`。
 - **hedge ratio**：本 change 只讀 `position-accounting` 提供的數值與 §14 兩條門檻；**C-19（名目或數量）未決**，決議不影響本 change 的程式結構，只影響輸入值（見 Open Questions）。
 
-### 6. ⚠️ C-16 決策選項（待使用者決議，本 change 不做決定）
+### 6. ✅ C-16 決策（2026-10-02 已決議：全部採推薦方案）
 
-規格書 §23 描述為單一連鎖流程（停止 → 撤單 → 評估 → 必要時平倉）；技術書 §33 為三個獨立動作且第一階段只停止新交易。以下為 §34 C-16 的五個子問題。**推薦 = 主對話已向使用者提出的方案**；specs 依推薦撰寫，決議不同時修改 `kill-switch` spec 與 tasks 4.x。
+規格書 §23 描述為單一連鎖流程（停止 → 撤單 → 評估 → 必要時平倉）；技術書 §33 為三個獨立動作且第一階段只停止新交易。以下為 §34 C-16 的五個子問題與決議結果（皆為推薦方案）。
 
 **(1) 按一次到底做到哪一層？**
 
@@ -180,7 +180,7 @@ HEDGED / EXIT_PENDING ──▶ Position 6 項 ──▶ EMERGENCY_EXIT 請求 �
 - 推薦理由：自動觸發只停止新交易，不主動動部位——斷線時送撤單 / 平倉單本身就不可靠；對帳錯誤代表帳本不可信，此時自動平倉可能依錯誤數量下單，應交人處理。L3 永不自動。
 - 推薦方案的延伸（非 C-16 原題，另列 Open Question KS-6）：解除只能手動、清理中拒絕解除、來源恢復不自動解除。
 
-### 7. Kill Switch 實作要點（依推薦方案，⚠️ 待 C-16）
+### 7. Kill Switch 實作要點（✅ C-16 已決議，依本方案開工）
 
 - 狀態：`NONE | L1_STOP_ENTRY | L2_CANCEL_ENTRY | L3_FLATTEN`，只升不降，手動解除回 `NONE`。狀態不另建表，由 `KILL_SWITCH_ACTIVATED` / `KILL_SWITCH_RELEASED` 事件重建（event-sourced），Runtime 啟動時在 ARM Paper Execution 前恢復。
 - 事件：`KILL_SWITCH_ACTIVATED`、`KILL_SWITCH_RELEASED`、`KILL_SWITCH_TRIGGERED`（已啟動時的自動觸發）、`KILL_SWITCH_FLATTEN_REQUESTED`、`KILL_SWITCH_FLATTEN_REJECTED`、`KILL_SWITCH_CANCEL_FAILED`（取代技術書 §26 的 `KILL_SWITCH_*` 佔位）。

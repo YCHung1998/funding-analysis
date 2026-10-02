@@ -674,19 +674,17 @@ Last Event:       15:32:01.120
 
 ---
 
-## 33. Kill Switch
+## 33. Kill Switch（✅ C-16 2026-10-02 決議）
 
-Kill Switch 第一階段 = **STOP NEW TRADES**，不要直接等於 CLOSE EVERYTHING。分三個動作：
+Kill Switch 第一階段 = **STOP NEW TRADES**，不要直接等於 CLOSE EVERYTHING。三層分級、高層包含低層（規格書 §23、§34 C-16）：
 
-| 動作 | 行為 |
+| 層級 | 行為 |
 |------|------|
-| **STOP ENTRY** | 禁止建立新交易 |
-| **CANCEL ORDERS** | 取消未成交掛單 |
-| **EMERGENCY FLATTEN** | 平掉現有部位 |
+| **L1 STOP ENTRY**（預設按鈕） | 禁止建立新交易；進行中 Trade 與補足單不受影響 |
+| **L2 CANCEL ENTRY** | 只撤 `purpose='ENTRY'` 的掛單，絕不撤 `EXIT`/`EMERGENCY_CLOSE`；撤單後變單腿的 Trade 自動依 §14 分類處理 |
+| **L3 FLATTEN** | 兩段式確認（一次性確認碼、10 秒 TTL）後，自動送出所有緊急平倉單 |
 
-三個動作分開。
-
-> ⚠️ 待決 C-16：規格書 §23 描述為單一連鎖流程；需決定的 5 個子問題見規格書 §34 C-16。決議前不得實作。
+狀態只升不降，手動解除回 `NONE`；系統自動觸發只到 L1（斷線 / 資料過舊）或 L1 + Trade 轉 FAILED（`RECONCILIATION_ERROR`），`CLOCK_UNRELIABLE` 不觸發，L3 永不自動。詳見規格書 §23、§34 C-16 與 `risk-engine-kill-switch` design.md §6–7（實作要點與理由）。
 
 ---
 

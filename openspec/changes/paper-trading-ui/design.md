@@ -3,7 +3,7 @@
 - **現況**：研究 UI（`src/`，React 19 + Vite，`server.ts` 以 Vite middleware 服務）有 9 個分頁，全部 static import（FE-06）；`App.tsx` 以 `activeTab` 條件渲染，`Header.tsx` 定義 `ActiveTab` 聯集，`HelpModal.tsx` 的 `HELP_DICTIONARY: Record<ActiveTab, …>` 會強制每個分頁都有說明條目。資料抓取只有 `liveMarketService.fetchLiveMarketScan()`，無 `AbortController`；`DryRunConsole` 有 FE-01 的 stale closure / 亂序覆寫。沒有 WebSocket、沒有測試。
 - **架構前提**（技術書 §3、C-06）：Paper Trading Runtime 是獨立 Node process，是 SQLite 的唯一寫入者；`server.ts` 唯讀查詢 SQLite 並把 Runtime 事件以 WebSocket 轉發；控制指令經 `server.ts` 轉交 Runtime 控制通道，由 Runtime 自行驗證。UI 是 Observer / Controller（§48.3），交易流程不依賴 UI（§34、§48.4）。
 - **上游 change**（本 change 只消費）：`setup-vitest`（測試基礎）；`trading-schema-storage`（`runtime/src/types/` v0.2 型別、`glossary.ts`、Paper 唯讀查詢 API）；`runtime-health-reconciliation`（Health 模型、WebSocket 事件轉發）；`paper-trading-event-loop`（Decision 6：`funding_confirmed` / `finalized_at` 與「已平倉 · 待入帳」顯示語意）。
-- **限制**：HANDOFF §3 Invariants（尤其 #1 不下單、#2 憑證不進前端、#3 無交易所名稱分支、#5 費率小數、#7 mock 標示）；C-16 Kill Switch 待決；C-19 hedge ratio 基準待決（UI 只顯示 Runtime 給的值，不受影響）。
+- **限制**：HANDOFF §3 Invariants（尤其 #1 不下單、#2 憑證不進前端、#3 無交易所名稱分支、#5 費率小數、#7 mock 標示）；C-16 Kill Switch 已於 2026-10-02 決議為三層分級（本 change 的 Kill Switch UI 仍為 disabled 佔位，真正的三顆按鈕待 `risk-engine-kill-switch` group 4 落地後另排排程實作）；C-19 hedge ratio 基準已決議為 `QUANTITY`（UI 只顯示 Runtime 給的值，不受影響）。
 - **本 change 不寫任何持久化實體、不產生狀態轉換**，因此 design rule「每個實體有 `created_at` / `updated_at`、每次轉換有 TradingEvent」在本 change 的落點是：UI 如實**顯示**這些時間戳與事件，不遺漏、不合併。
 
 ## Goals / Non-Goals
@@ -17,7 +17,7 @@
 
 **Non-Goals:**
 
-- `server.ts` API / WebSocket 實作、SQLite、術語表內容、Kill Switch 行為（C-16）、Runtime 啟停與設定 UI、既有分頁重構或全面 lazy 化。
+- `server.ts` API / WebSocket 實作、SQLite、術語表內容、Kill Switch 行為本體（C-16 已決議，實作屬 `risk-engine-kill-switch` group 4）、Runtime 啟停與設定 UI、既有分頁重構或全面 lazy 化。
 
 ## Decisions
 
@@ -99,9 +99,9 @@ src/features/paperTrading/
 - Runtime Health 狀態（`RUNNING`、`CONNECTED`、`HEALTHY`、`ARMED`、`STALE`、`RUNTIME_UNREACHABLE` …）也要有術語條目 → 跨 change 假設 A-3。
 - 覆蓋測試：列舉型別中的所有代碼，斷言術語表都有條目（型別以 `as const` 陣列匯出為前提，假設 A-2）。
 
-### 8. Kill Switch 預留（C-16 blocked）
+### 8. Kill Switch 預留（本輪仍維持佔位；C-16 已於 2026-10-02 決議為三層分級，三顆按鈕的實際 UI 排入下一輪待 `risk-engine-kill-switch` group 4 落地後一起做）
 
-- `KillSwitchPlaceholder`：顯示區塊標題 `KILL SWITCH`、`⚠️ 待決 C-16` 說明與規格書 §34 C-16 的 5 個待決子問題摘要連結；一個 disabled 按鈕（不綁 onClick）。**不**預先畫成一顆或三顆按鈕——那正是 C-16 要決定的事。
+- `KillSwitchPlaceholder`（本 change 已完成的部分，不重新打開）：顯示區塊標題 `KILL SWITCH`、`⚠️ 待決 C-16` 說明與規格書 §34 C-16 的 5 個子問題摘要連結；一個 disabled 按鈕（不綁 onClick）。C-16 決議結果（三層分級：L1 STOP ENTRY / L2 CANCEL ENTRY / L3 FLATTEN）見規格書 §23、§34；UI 改為三顆按鈕是下一輪工作，不在本 change 範圍內追加。
 - `controlChannel.ts`：`sendControlCommand(cmd: ControlCommand, signal): Promise<ControlAck>`，`POST /api/paper/control`，回應只代表 server 已轉交（`202`），實際結果以 Runtime 事件 `KILL_SWITCH_*` / Health 呈現，UI 不做樂觀更新。本 change 只有定義與單元測試（驗證請求形狀），無呼叫點；以靜態檢查把關。
 - Kill Switch 目前狀態（若 Runtime 回報）顯示在 Health 面板（假設 A-4），未回報時顯示 `—`。
 
@@ -135,7 +135,7 @@ src/features/paperTrading/
 | A-8 | `GET /api/paper/trades/:trade_id/events?cursor=&limit=200` → `{ items: Array<TradingEvent & { seq: number }>; next_cursor }`，依 `(timestamp, seq)` 升冪 | `trading-schema-storage`（event-store） |
 | A-9 | `GET /api/paper/events?after_seq=&limit=500` → 全域事件補抓，同上排序；`seq` 為 event store 單調遞增序號 | `runtime-health-reconciliation` |
 | A-10 | WebSocket `/ws/paper` 由 server 推送 `{ type: 'event'; seq; event: TradingEvent } \| { type: 'health'; health: RuntimeHealth } \| { type: 'hello'; last_seq }`；server 只轉發，不保證送達（UI 以 A-9 補抓） | `runtime-health-reconciliation` |
-| A-11 | `POST /api/paper/control` `{ command, request_id }` → `202 { request_id, forwarded_at }`；Runtime 自行驗證，結果以 `KILL_SWITCH_*` 事件回報；指令集合待 C-16 | `kill-switch`（C-16 決議後的 change） |
+| A-11 | `POST /api/paper/control` `{ command, request_id }` → `202 { request_id, forwarded_at }`；Runtime 自行驗證，結果以 `KILL_SWITCH_*` 事件回報；指令集合 = `STOP_ENTRY`/`CANCEL_ENTRY`/`FLATTEN`（C-16 已決議三層分級） | `risk-engine-kill-switch` group 4 |
 | A-12 | `payload` 不含憑證（Invariant #2），UI 可直接顯示摘要 | `event-store` |
 
 若上游最終形狀不同，只需調整 `api/paperApi.ts` 與 `api/contracts.ts` 的對應層，元件不受影響。
@@ -159,6 +159,6 @@ src/features/paperTrading/
 
 1. 「已平倉 · 待入帳」/「已定案」要維持中文顯示（D-6 原文），還是改成英文代碼（例如 `FUNDING_PENDING` / `FINALIZED`）納入術語表以符合 C-15？目前依 D-6 以中文顯示。
 2. Header 品牌列 `Research ──► Dry-Run ──► Live` 與 `7-MODULE SPEC v0.1` 是否改為五階段（§1.1）表述？本 change 暫不改，避免擴大範圍。
-3. Kill Switch 控制區在 C-16 決議後是一顆（連鎖）還是三顆（STOP ENTRY / CANCEL ORDERS / EMERGENCY FLATTEN）按鈕，以及是否需要二次確認——blocked-by C-16。
-4. Paper 分頁是否需要登入 / 本機限定保護？目前 `server.ts` 監聽 `0.0.0.0`（BE-10 相關）；唯讀資料外洩風險低，但 C-16 決議後的控制通道需要保護——建議隨 Kill Switch change 一起決定。
+3. ~~Kill Switch 控制區在 C-16 決議後是一顆（連鎖）還是三顆按鈕~~ ✅ 2026-10-02 已決議：三顆分級按鈕（L1 STOP ENTRY / L2 CANCEL ENTRY / L3 FLATTEN），L3 需二次確認（見規格書 §23/§34）。UI 實作排入下一輪，待 `risk-engine-kill-switch` group 4 落地後一起做。
+4. Paper 分頁是否需要登入 / 本機限定保護？目前 `server.ts` 監聽 `0.0.0.0`（BE-10 相關）；唯讀資料外洩風險低，但控制通道需要保護——建議隨 Kill Switch UI 實作一起決定。
 5. Runtime Health 的「STALE」門檻 10 s 是否合適（取決於 Runtime 心跳頻率，由 `runtime-health-reconciliation` 決定）？
