@@ -51,11 +51,11 @@
 
 ### 3. Health 發佈：SQLite 單列
 
-- Runtime 每 `health_publish_interval_ms` 與元件變化時 upsert `runtime_health(id=1)`；`server.ts` 以 `new DatabaseSync(path, { readOnly: true })` 讀取。
+- Runtime 每 `health_publish_interval_ms` 與元件變化時 upsert `runtime_health(id=1)`；`server.ts` 以 `new DatabaseSync(path, { readOnly: true })` 讀取，經 `GET /api/paper/health` 回傳（2026-10-03 由原規劃的 `/api/runtime/health` 改名，見 proposal.md「What Changes」的修正註記）。
 - 為什麼走 SQLite：C-06 已確定 `server.ts` 只讀 SQLite；不需新增 IPC / port，Runtime 與 server 各自重啟互不影響；失聯判斷只需比對 `updated_at`。
 - `runtime_health` 是覆寫式單列，屬**狀態快取**而非交易實體，不產生 TradingEvent（Health 變化本身不是交易資料）；但 ARM / DISARM 與啟動步驟有事件（`RUNTIME_*`）。
 - `updated_at` 使用 Runtime `Clock`；server 判斷失聯使用 server 本機時間（`server.ts` 不在 `runtime/src/`，不受 Clock 規則限制），閾值 3 倍間隔吸收兩者偏差。
-- **替代方案**：Runtime 開 HTTP / WebSocket 給 server → 多一個連線與認證面，且事件串流通道屬 `paper-trading-ui`，本 change 不先定；否決。
+- **替代方案**：Runtime 開 HTTP / WebSocket 給 server → 多一個連線與認證面；否決（與 C-06「server 只唯讀 SQLite」一致）。2026-10-03 更新：`paper-trading-ui/design.md` 原本假設事件串流（A-9 `/api/paper/events`、A-10 `/ws/paper`）由本 change 提供，與此處否決矛盾——已確認改由新開的 trade-data 讀取 API change 一併負責，本 change 只保留 Health 單列快照。
 - 回應只含狀態字串；`credentials` 只有 `PRESENT | MISSING | INVALID`，以 `assertNoCredentials` 檢查回應物件（Invariant #2）。
 
 ### 4. 啟動流程
@@ -88,7 +88,7 @@ runtime/src/health/healthModel.ts                元件狀態、推導規則、e
 runtime/src/health/healthPublisher.ts            SQLite upsert
 runtime/src/health/recovery.ts                   重啟恢復
 runtime/src/storage/migrations/002_runtime_health.ts
-server.ts                                        GET /api/runtime/health、/api/runtime/reconciliation/latest
+server.ts                                        GET /api/paper/health、/api/runtime/reconciliation/latest
 ```
 
 ## Risks / Trade-offs

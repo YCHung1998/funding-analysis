@@ -14,7 +14,7 @@
 ## 3. Runtime Health
 
 - [ ] 3.1 `healthModel.ts`：元件狀態、推導規則、`entry_allowed` 與 `entry_block_reasons`（stale、halt、scan-only 所斷線不影響）
-- [ ] 3.2 `healthPublisher.ts` + `server.ts` 唯讀 `GET /api/runtime/health`、`GET /api/runtime/reconciliation/latest`：失聯回 `UNREACHABLE`、server 寫入失敗、回應不含憑證
+- [ ] 3.2 `healthPublisher.ts` + `server.ts` 唯讀 `GET /api/paper/health`（2026-10-03 由 `/api/runtime/health` 改名，配合已合併的 `paper-trading-ui` 前端路徑，見 proposal.md）、`GET /api/runtime/reconciliation/latest`：失聯回 `UNREACHABLE`、server 寫入失敗、回應不含憑證
 
 ## 4. 啟動與恢復
 
@@ -24,4 +24,4 @@
 
 ## 5. 收尾
 
-- [ ] 5.1 執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate runtime-health-reconciliation --strict` 全數通過並附輸出；實際啟動 `npm run runtime` 與 `npm run dev` 後打 `/api/runtime/health` 記錄結果；更新 HANDOFF §7 交接紀錄
+- [ ] 5.1 執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate runtime-health-reconciliation --strict` 全數通過並附輸出；實際啟動 `npm run runtime` 與 `npm run dev` 後打 `/api/paper/health` 記錄結果；更新 HANDOFF §7 交接紀錄
