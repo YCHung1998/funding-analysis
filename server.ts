@@ -18,6 +18,16 @@ import {
   readRuntimeHealthRow,
 } from './runtime/src/health/healthPublisher';
 import { buildLiveScanCandidates } from './server/liveScanRegistry';
+import {
+  getAccountSnapshot,
+  getCompletedTrades,
+  getCurrentTrades,
+  getTradeDetail,
+  getTradeEvents,
+  MalformedCursorError,
+  openPaperDb as openPaperReadDb,
+  PaperReadLayerUnavailableError,
+} from './server/paperReadLayer';
 import { resolveKlinesSymbol } from './server/liveKlinesResolve';
 import { InstrumentRegistry } from './runtime/src/market/instruments/registry';
 import { UpstreamError } from './runtime/src/market/http/publicRestClient';
@@ -627,6 +637,135 @@ app.get('/api/runtime/reconciliation/latest', (_req, res) => {
   } catch (err: any) {
     console.error('[runtime-health] /api/runtime/reconciliation/latest failed:', err);
     return res.status(500).json({ error: err.message || 'RECONCILIATION_READ_FAILED' });
+  } finally {
+    reader?.close();
+  }
+});
+
+// --- paper-trading-read-api wiring (tasks 1.1/2.1) --------------------------
+// 唯讀四條 Paper Trading 資料路由（design.md Decision 1/4）：每次請求各自開一個
+// `readOnly: true` 連線、用完即關閉（沿用 runtime-health-reconciliation 的慣例，
+// `server/paperReadLayer.ts` 自己的 `openPaperDb` helper，不共用上面 health 用的
+// `openPaperDbReadOnly`——design.md Decision 1「保持檔案/目錄邊界」）。
+// `PaperReadLayerUnavailableError`（DB/表不存在、或帳戶快照尚無資料）統一回 503；
+// 未知 `trade_id` 回 404；格式錯誤的 `cursor` 回 400（design.md Decision 4）。
+
+/**
+ * GET /api/paper/account
+ * 回真實 `AccountSnapshot`（`runtime/src/types/account.ts`），非 design.md 原始
+ * A-5 文字形狀（design.md Context「A-5 已過期」）。
+ */
+app.get('/api/paper/account', (_req, res) => {
+  const reader = openPaperReadDb(PAPER_DB_PATH);
+  try {
+    const snapshot = getAccountSnapshot(reader);
+    return res.json(snapshot);
+  } catch (err) {
+    if (err instanceof PaperReadLayerUnavailableError) {
+      return res.status(503).json({ error: err.message });
+    }
+    console.error('[paper-trading-read-api] /api/paper/account failed:', err);
+    return res.status(500).json({ error: 'ACCOUNT_READ_FAILED' });
+  } finally {
+    reader?.close();
+  }
+});
+
+/**
+ * GET /api/paper/trades?scope=current|completed
+ * current：警示狀態優先排序、群內 `created_at` 新到舊，無分頁。
+ * completed：keyset 分頁（`finalized_at ?? updated_at` desc + `trade_id` tie-break）、
+ * 可選 `final_status` 篩選、可選 `cursor`/`limit`（預設 50）。
+ */
+app.get('/api/paper/trades', (req, res) => {
+  const scope = req.query.scope;
+  const reader = openPaperReadDb(PAPER_DB_PATH);
+  try {
+    if (scope === 'current') {
+      const items = getCurrentTrades(reader);
+      return res.json({ items });
+    }
+    if (scope === 'completed') {
+      const finalStatusParam = typeof req.query.final_status === 'string' ? req.query.final_status : undefined;
+      const cursorParam = typeof req.query.cursor === 'string' ? req.query.cursor : null;
+      const limitParam = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : 50;
+      const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 50;
+      try {
+        const page = getCompletedTrades(
+          reader,
+          finalStatusParam ? { final_status: finalStatusParam as never } : {},
+          cursorParam,
+          limit,
+        );
+        return res.json(page);
+      } catch (err) {
+        if (err instanceof MalformedCursorError) {
+          return res.status(400).json({ error: 'MALFORMED_CURSOR' });
+        }
+        throw err;
+      }
+    }
+    return res.status(400).json({ error: 'INVALID_SCOPE' });
+  } catch (err) {
+    if (err instanceof PaperReadLayerUnavailableError) {
+      return res.status(503).json({ error: err.message });
+    }
+    console.error('[paper-trading-read-api] /api/paper/trades failed:', err);
+    return res.status(500).json({ error: 'TRADES_READ_FAILED' });
+  } finally {
+    reader?.close();
+  }
+});
+
+/**
+ * GET /api/paper/trades/:trade_id
+ * `TradeDetail { trade, legs, orders, fills, funding_settlements, opportunity, result? }`；
+ * 未知 `trade_id` 回 404。
+ */
+app.get('/api/paper/trades/:trade_id', (req, res) => {
+  const reader = openPaperReadDb(PAPER_DB_PATH);
+  try {
+    const detail = getTradeDetail(reader, req.params.trade_id);
+    if (!detail) return res.status(404).json({ error: 'TRADE_NOT_FOUND' });
+    return res.json(detail);
+  } catch (err) {
+    if (err instanceof PaperReadLayerUnavailableError) {
+      return res.status(503).json({ error: err.message });
+    }
+    console.error('[paper-trading-read-api] /api/paper/trades/:trade_id failed:', err);
+    return res.status(500).json({ error: 'TRADE_DETAIL_READ_FAILED' });
+  } finally {
+    reader?.close();
+  }
+});
+
+/**
+ * GET /api/paper/trades/:trade_id/events?cursor=&limit=
+ * `seq` 升冪、keyset 分頁（重用 `paperCursor.ts`）；未知 `trade_id` 回 404；
+ * 格式錯誤的 `cursor` 回 400。
+ */
+app.get('/api/paper/trades/:trade_id/events', (req, res) => {
+  const reader = openPaperReadDb(PAPER_DB_PATH);
+  try {
+    const cursorParam = typeof req.query.cursor === 'string' ? req.query.cursor : null;
+    const limitParam = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : 200;
+    const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 200;
+    try {
+      const page = getTradeEvents(reader, req.params.trade_id, cursorParam, limit);
+      if (!page) return res.status(404).json({ error: 'TRADE_NOT_FOUND' });
+      return res.json(page);
+    } catch (err) {
+      if (err instanceof MalformedCursorError) {
+        return res.status(400).json({ error: 'MALFORMED_CURSOR' });
+      }
+      throw err;
+    }
+  } catch (err) {
+    if (err instanceof PaperReadLayerUnavailableError) {
+      return res.status(503).json({ error: err.message });
+    }
+    console.error('[paper-trading-read-api] /api/paper/trades/:trade_id/events failed:', err);
+    return res.status(500).json({ error: 'TRADE_EVENTS_READ_FAILED' });
   } finally {
     reader?.close();
   }

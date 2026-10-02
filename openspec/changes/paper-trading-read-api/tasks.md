@@ -12,7 +12,7 @@
 
 ## 2. Trades 端點
 
-- [ ] 2.1 `getCurrentTrades()` + `GET /api/paper/trades?scope=current`：警示狀態優先排序（`LEG_IMBALANCE`/`EMERGENCY_EXIT`/`FAILED` 先）、群內 `created_at` 新到舊
+- [x] 2.1 `getCurrentTrades()` + `GET /api/paper/trades?scope=current`：警示狀態優先排序（`LEG_IMBALANCE`/`EMERGENCY_EXIT`/`FAILED` 先）、群內 `created_at` 新到舊。證據：`server/paperReadLayer.ts`（`getCurrentTrades`：排除終態 `CLOSED`/`ABORTED`/`FAILED`、警示群組（`LEG_IMBALANCE`/`EMERGENCY_EXIT`/`FAILED`，雖然 `FAILED` 同時是終態因而已被排除在外，實際有效的警示群組是 `LEG_IMBALANCE`/`EMERGENCY_EXIT`）優先、群內 `created_at` desc；`deriveCurrentTradeFields` 算出 `long_exchange`/`short_exchange`/`hedge_ratio`/`unrealized_pnl_usdt`/`funding_expected_usdt`，詳見 design.md Implementation Notes）、`server/paperReadLayer.currentTrades.test.ts`（5 tests：警示優先排序＋群內新到舊、排除 `CLOSED`/`ABORTED`、`FAILED` 同時被排除、空陣列、衍生欄位正確性）。**`server.ts`**：本次一併加入全部 4 條路由（`GET /api/paper/account`、`GET /api/paper/trades`（current+completed 共用一條，見 2.2）、`GET /api/paper/trades/:trade_id`（見 2.3）、`GET /api/paper/trades/:trade_id/events`（見 3.1）），因為四條路由共用同一套 `PaperReadLayerUnavailableError` → 503 / `MalformedCursorError` → 400 錯誤處理骨架，一次性加入骨架後各 task 的對應分支在後續 commit 逐一打開測試覆蓋；`GET /api/paper/account` 的路由本身未在 tasks.md 另立條目，隨本 task 一併補上（proposal.md「What Changes」要求的 4 條路由之一）。未修改既有 3 個 market-data 路由或 `runtime-health-reconciliation` 的 2 個路由。
 - [ ] 2.2 `getCompletedTrades(filter, cursor, limit)` + `GET /api/paper/trades?scope=completed`：keyset 分頁（`finalized_at ?? updated_at` desc + `trade_id` tie-break）、`final_status` 篩選、並發插入下分頁穩定性測試、格式錯誤 cursor → 400
 - [ ] 2.3 `getTradeDetail(tradeId)` + `GET /api/paper/trades/:trade_id`：open trade 無 `result`、closed trade 含 `result`、未知 id → 404
 
