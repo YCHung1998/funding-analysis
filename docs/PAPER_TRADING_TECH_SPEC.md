@@ -448,6 +448,8 @@ Paper Engine 必須產生 `EMERGENCY_EXIT`，**而不是假設交易失敗所以
 
 ## 20. Position Engine
 
+📎 已實作（2026-10-02，`position-funding-pnl`，`runtime/src/trading/positionManager.ts` `applyFill`）：純函式，不碰資料庫；Position 的提交經 `event-store` 的 `Ledger.applyFill` 與 Fill/Order/`POSITION_OPENED`/`POSITION_CLOSED` 事件同一交易原子寫入。
+
 Position 必須由 Fill 推導：
 
 ```text
@@ -465,6 +467,8 @@ Position 必須由 Fill 推導：
 
 ## 21. Position Accounting
 
+📎 已實作（`position-funding-pnl`，`runtime/src/trading/positionManager.ts`）：開倉以加權平均累加（`average_price`），平倉時 `average_entry_price` 凍結、逐筆 Fill 實現 Price PnL 並累加 `average_exit_price`；`base_quantity = Fill.quantity × contract_multiplier`（`instrument-registry` 的 `qty_unit_in_base`）供 hedge ratio 使用。
+
 ```text
 new_position  = old_position + fill
 average_price = Σ(fill_quantity × fill_price) / Σ(fill_quantity)
@@ -473,6 +477,8 @@ average_price = Σ(fill_quantity × fill_price) / Σ(fill_quantity)
 ---
 
 ## 22. PnL Engine
+
+📎 已實作（`position-funding-pnl`，`runtime/src/accounting/pnlEngine.ts` `aggregatePnl` + `runtime/src/accounting/tradeResultAssembler.ts`）：跨腿加總 price/fee/slippage/funding，`net_pnl = cost-model.composeNetPnl(...)`；含「Slippage 不重複扣除」迴歸測試（S01 −0.50，非誤算的 −0.90）。
 
 ```text
 Long  PnL = (exit_price − entry_price) × quantity
@@ -490,6 +496,8 @@ Net PnL = Funding PnL + Price PnL − Fees − Other Costs
 ---
 
 ## 23. Funding Engine
+
+📎 已實作（`position-funding-pnl`，`runtime/src/trading/fundingAmount.ts` `fundingAmount(state, input)`）：僅計算金額（EXPECTED/ELIGIBLE/SETTLED/NOT_ELIGIBLE/MISSED 各自寫入欄位），狀態與時間點沿用 `funding-settlement-rules`（`runtime/src/funding/settlementInference.ts`，本節 §23.1 所述狀態機）不重新定義；單腿失敗只計實際 funding（Q-08，見 §15）。
 
 📎 各交易所資金費率機制官方文件（結算時間偏差、費率計算方式）：[`REFERENCES.md`](REFERENCES.md)。
 
@@ -862,7 +870,9 @@ interface PaperTradingConfig {
     hedge_ratio_hedged_min: number;          // ✅ C-12：預設 0.99（規格書 §14.1 ①）
     hedge_ratio_imbalance_below: number;     // ✅ C-12：預設 0.90（規格書 §14.1 ②）
     partial_hedge_max_duration_ms: number;   // ✅ C-12：預設 5000（規格書 §14.1 ③）
-    symbol_tier_overrides?: Record<string, Partial<PaperTradingConfig>>;  // 依波動度分級覆寫（§14.3）
+    hedge_ratio_basis: 'NOTIONAL' | 'QUANTITY'; // ✅ C-19 2026-10-02 已決議：預設 'QUANTITY'（合約乘數換算後的基礎資產數量，規格書 §14）；與 paper-execution-engine 共用同一設定欄位。已實作：runtime/src/trading/hedgeRatio.ts `computeHedgeRatio`
+    symbol_tier_overrides?: Record<string, Partial<PaperTradingConfig>>;  // 依波動度分級覆寫（§14.3）；hedge ratio 的 tier 覆寫見 `classifyHedge` 的 overrides 參數（runtime/src/trading/hedgeRatio.ts）
+    break_even_tolerance_usdt: number;       // position-funding-pnl design.md 跨 change 假設 7：預設 0.01；TradeResult.final_status 的 PROFIT/LOSS/BREAK_EVEN 分界（規格書 §21）。已實作：runtime/src/accounting/tradeResultAssembler.ts `DEFAULT_BREAK_EVEN_TOLERANCE_USDT`
 
     funding_alignment_tolerance_ms: number;  // ✅ C-10：預設 60000
 

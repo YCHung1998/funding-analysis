@@ -192,6 +192,32 @@ B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run che
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
 
+### 2026-10-03（2）— Claude Sonnet 5，`position-funding-pnl`（分支 `feature-position-funding-pnl`，來自 `design/position-funding-pnl-contract-final`）
+- **做了什麼**：實作 OpenSpec change `position-funding-pnl`（capability `position-accounting` + `pnl-engine`）tasks 1.1–5.1 全部 12 項完成：
+  - Position：`runtime/src/types/account.ts` 的 `PaperPosition` 加法欄位（`base_quantity`/`entry_filled_quantity`/`exit_filled_quantity`/`entry_notional_usdt`/`average_exit_price`/`realized_price_pnl_usdt`/`fees_usdt`/`slippage_attribution_usdt`/`applied_fill_ids`），搭配可逆遷移 `runtime/src/storage/migrations/002_position_accounting_fields.ts` 與 `orderRepository.ts` 持久化；`runtime/src/trading/positionManager.ts`（純函式 `applyFill`）：加權平均開倉、逐筆實現平倉 PnL（`average_entry_price` 凍結）、`fill_id` 冪等、`RECONCILIATION_ERROR`/`POSITION_OVERCLOSE`/`UNKNOWN_ORDER`/`UNSUPPORTED_FEE_ASSET`、`unrealizedPnl`；經 `Ledger.applyFill` 與 Fill/Order/`POSITION_OPENED`/`POSITION_CLOSED` 事件同一交易原子寫入。
+  - Hedge ratio / imbalance：`runtime/src/trading/hedgeRatio.ts`——`computeHedgeRatio`（`NOTIONAL`/`QUANTITY` 可切換，預設 `QUANTITY`，✅ C-19）、`classifyHedge`（`HEDGED`/`PARTIALLY_HEDGED`/`LEG_IMBALANCE`，邊界 0.99/0.90，symbol tier 覆寫）、`updateLegImbalance`（連續不平衡區間量測）。
+  - FundingSettlement 金額：`runtime/src/trading/fundingAmount.ts`（`fundingAmount(state, input)` hook，正式釘選簽章，呼叫 `cost-model.fundingCashflow`）；task 3.2 發現並記錄一個循環 import 限制（見下「沒做完」）；`src/engine/dryRunEngine.ts:151` 修正 Q-08（單腿失敗時不對沖的一腿也不計資金費，因為它會在結算前被緊急平倉）。
+  - TradeResult：`runtime/src/accounting/pnlEngine.ts`（`aggregatePnl`/`roiOnNotional`/`roiOnCapital`，含 Q-05「滑價不重複扣除」迴歸測試）、`runtime/src/accounting/tradeResultAssembler.ts`（`assembleTradeResult`：暫定 → 定案，`final_status`/`result_reason` 優先序，重用 `funding-settlement-rules` 的 `finalizeTradeResult`）。
+  - 情境測試：`runtime/test/scenarios/positionFundingPnl.scenario.test.ts`（S01 完整成功、零成交 ABORTED、單腿 EMERGENCY_EXIT 三情境，Position → FundingSettlement → TradeResult 全鏈）。
+  - 文件：規格書 §14（`hedge_ratio_basis` 設定欄位 + 已實作註記）、§21（TradeResult 欄位計算方式已實作註記）；技術書 §20–§23（已實作註記）、§38（新增 `hedge_ratio_basis`、`break_even_tolerance_usdt`）。
+- **驗證證據**：
+  - fail-then-pass（唯一真正的 bug 修正，task 3.3 Q-08）：`src/engine/dryRunEngine.test.ts` 先改既有測試斷言 `funding_pnl.leg_long` 應為 `0`，確認紅燈（`expected 0, got -0.1`），修正 `dryRunEngine.ts:151` 後轉綠（9/9 tests）。其餘 11 項任務為新模組（無既有 bug 可先紅燈），採先寫測試鎖住 tasks.md/spec 的數字案例、每個模組完成後 100% 綠的方式驗證（非嚴格 red-green-refactor，已在最終報告中註明此偏離）。
+  - `npm run lint`（`tsc --noEmit`）→ 無輸出（通過）。
+  - `npm run build`（vite build）→ 1721 modules transformed，✓ built in 656ms。
+  - `npm test`（`vitest run`）→ **128 個測試檔、1179 個測試全過**（含新增 11 個測試檔：`hedgeRatio.test.ts` 15、`positionManager.test.ts` 14、`fundingAmount.test.ts` 7、`fundingAmount.crossCheck.test.ts` 3、`pnlEngine.test.ts` 8、`tradeResultAssembler.test.ts` 10、`positionFundingPnl.scenario.test.ts` 3，以及既有 `dryRunEngine.test.ts` 修正後 9）。
+  - `npx openspec validate position-funding-pnl --strict` → `Change 'position-funding-pnl' is valid`。
+  - 分支 `feature-position-funding-pnl`，起點 `design/position-funding-pnl-contract-final` tip `4bc792d`。
+- **沒做完 / 已知問題**：
+  - **task 3.2 偏離 design.md 字面敘述，已於 tasks.md 3.2 記錄**：design.md 建議「若狀態機已自帶現金流計算，改為呼叫 `fundingAmount`」，但 `funding/settlementInference.ts`（`funding-settlement-rules` 狀態機，屬已合併的 `paper-trading-event-loop`）無法直接呼叫 `trading/fundingAmount.ts`——`accounting/fundingMath.ts`（`fundingAmount` 的依賴）已反向 import `settlementInference.ts` 的 `computeSettlementCashflow`，形成循環 import。兩者皆為同一原語的薄包裝（Q-07 已透過共用原語滿足，無口徑分裂風險），改以 `runtime/src/trading/fundingAmount.crossCheck.test.ts` 的等價性測試鎖住，而非實際改寫呼叫關係。若未來要真的讓狀態機呼叫這份 hook，需要先把 `computeSettlementCashflow` 這個原語搬到兩者都能安全 import 的更底層模組（例如直接搬進 `cost-model`），屬於下一輪的重構，不在本 change 範圍內。
+  - `runtime/src/trading/` 目錄目前只有本 change 的 `hedgeRatio.ts`/`positionManager.ts`/`fundingAmount.ts`；`paper-execution-engine` 尚未落地，其 `entryCoordinator.ts`/`exitCoordinator.ts`（會 import 本 change 的 `computeHedgeRatio`/`classifyHedge`）與 `PositionReader.getOpenQuantity` port 仍待該 change 實作時對齊（CONTRACT_MEMO_SKEPTIC.md §1 已指出的既知缺口，非本 change 缺陷）。
+  - `tradeResultAssembler.ts` 不會自己呼叫 `Ledger`/`EventStore` 寫入 `TRADE_COMPLETED`——`shouldEmitTradeCompleted` 只是純函式判斷式，實際接線（何時呼叫 `assembleTradeResult`、何時提交 `TradeResult` 到資料庫）留給尚不存在的 Runtime 主迴圈 / Trade Manager（`paper-execution-engine` 或其後續 change）。
+  - `positionManager.applyFill` 的 `contractMultiplier` 由呼叫端傳入（未直接依賴 `InstrumentRegistry`），維持純函式特性；呼叫端整合 `instrument-registry` 的 `qty_unit_in_base` 查詢為下一輪工作。
+- **下一步建議**：
+  1. `paper-execution-engine` 落地時：import `runtime/src/trading/hedgeRatio.ts` 的 `computeHedgeRatio`/`classifyHedge`（不要重新實作），並對齊 `PositionReader.getOpenQuantity` 回傳 `positionManager` 的 `base_quantity`。
+  2. Runtime 主迴圈／Trade Manager 落地時：在 Trade/Leg 終態事件處呼叫 `assembleTradeResult`，並用 `shouldEmitTradeCompleted` 判斷是否需要寫入一筆 `TRADE_COMPLETED`。
+  3. 若要真正讓 `funding-settlement-rules` 呼叫 `fundingAmount`（而非目前的等價性測試），需要先把 `computeSettlementCashflow` 搬到兩者共同的更底層模組，解開循環 import。
+- **需要使用者決定的事**：無新增；舊的非框架待定項（最低流動性門檻、`slippage_safety_buffer_pct`、`basis_sigma_pct`、`DEFAULT_FEE_TABLE` 官方查證、`research_min_net_pnl_usdt`）持續提醒，不影響本次交付。
+
 ### 2026-10-03 — Claude (Opus 5.5)：KS-6 決議
 - **做了什麼**：使用者確認 KS-6（Kill Switch 解除規則，design.md Open Question 3，非 C-16 原五題範圍）採用推薦方案——只能手動解除、清理中拒絕解除、來源恢復不自動解除。核對 `runtime/src/risk/killSwitch.ts` 的 `release()` 本來就是依此實作，**不需要改程式碼**；只更新文件標記：`openspec/changes/risk-engine-kill-switch/design.md`（Open Questions 1/2/3、Decision 6 附近的「推薦方案的延伸」註記）、`specs/kill-switch/spec.md`（Requirement「只能手動解除」移除「待決議」但書）。順便把同一份 Open Questions 清單裡早該更新卻漏掉的 C-16、C-19 也標為已決議（2026-10-02 那輪決議時漏改了這個檔案的 Open Questions 區）。
 - **驗證證據**：純文件變更，不影響程式邏輯；`npm run check` 未重跑（無程式變更），`openspec validate risk-engine-kill-switch --strict` 待下次 check 確認仍通過。

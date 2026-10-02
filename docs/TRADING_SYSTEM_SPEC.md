@@ -526,7 +526,9 @@ C-19 決議：改用「合約乘數換算後的基礎資產數量」計算（不
 | `imbalance_below ≤ ratio < hedged_min`（預設 0.90～0.99） | `PARTIALLY_HEDGED` | 部分對沖 |
 | `< imbalance_below`（預設 < 0.90） | `LEG_IMBALANCE` | 單腿失敗 / 失衡 |
 
-設定欄位：`hedge_ratio_hedged_min`、`hedge_ratio_imbalance_below`、`partial_hedge_max_duration_ms`（技術書 §38）。
+設定欄位：`hedge_ratio_hedged_min`、`hedge_ratio_imbalance_below`、`partial_hedge_max_duration_ms`、`hedge_ratio_basis`（技術書 §38）。
+
+📎 已實作（2026-10-02，`position-funding-pnl`，`runtime/src/trading/hedgeRatio.ts`）：`computeHedgeRatio`（`NOTIONAL`/`QUANTITY` 可切換，預設 `QUANTITY`）、`classifyHedge`（邊界 `hedged_min`/`imbalance_max`，symbol tier 覆寫）、`updateLegImbalance`（`max_leg_imbalance_usdt`/`max_leg_imbalance_duration_ms` 連續區間量測）。
 
 ### 14.1 怎麼設定、為什麼
 
@@ -743,6 +745,8 @@ expected_price = expected_basis_pnl + expected_slippage_attribution
 ---
 
 ## 21. Trade Result
+
+📎 已實作（2026-10-02，`position-funding-pnl`，`runtime/src/accounting/tradeResultAssembler.ts` `assembleTradeResult`）：每個欄位的計算方式——`funding_pnl_usdt`/`price_pnl_usdt`/`fee_usdt`/`slippage_attribution_usdt`/`net_pnl_usdt` 由 `runtime/src/accounting/pnlEngine.ts` `aggregatePnl` 彙總（跨腿加總 + `cost-model.composeNetPnl`）；`roi_on_notional_pct`/`roi_on_capital_pct`（✅ C-17，分母為 0 時回傳 0）由 `roiOnNotional`/`roiOnCapital` 計算；`final_status`（`ABORTED`/`FAILED`/`EMERGENCY_EXIT` 優先，其餘依 `break_even_tolerance_usdt` 分 `PROFIT`/`LOSS`/`BREAK_EVEN`）與 `result_reason`（`close_reason='KILL_SWITCH'` 時仍依淨值分類但 `result_reason` 固定為 `'KILL_SWITCH'`；任一腿 `MISSED` 時附加 `FUNDING_MISSED_MANUAL_REVIEW` 標記）；`funding_confirmed`/`finalized_at` 沿用 `funding-settlement-rules` 的 `finalizeTradeResult`（三種終態含 `MISSED` 即設定 `finalized_at`，`funding_confirmed` 僅在全部 `SETTLED`/`NOT_ELIGIBLE` 時為 `true`）。
 
 ```typescript
 interface TradeResult {
