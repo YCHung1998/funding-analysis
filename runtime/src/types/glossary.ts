@@ -171,6 +171,14 @@ export const GLOSSARY: readonly GlossaryEntry[] = [
   { code: 'SOURCE_STATUS_CHANGED', zh: '來源狀態改變', definition_zh: '每所 SourceStatus.state 轉換事件', category: 'EVENT' },
   { code: 'RATE_LIMIT_CIRCUIT_CHANGED', zh: '限流斷路器狀態改變', definition_zh: '每所限流斷路器 CLOSED / OPEN / HALF_OPEN 轉換事件', category: 'EVENT' },
   { code: 'SHORTLIST_SUBSCRIPTION_DROPPED', zh: '入圍訂閱被取消', definition_zh: '入圍合約因註冊表變動被取消訂閱', category: 'EVENT' },
+
+  // Kill Switch event codes (C-16, decided 2026-10-02; design.md §6–§7).
+  { code: 'KILL_SWITCH_ACTIVATED', zh: 'Kill Switch 已啟動', definition_zh: 'Kill Switch 層級升級，payload 含 from/to/source/reason/actor', category: 'EVENT' },
+  { code: 'KILL_SWITCH_RELEASED', zh: 'Kill Switch 已解除', definition_zh: '操作者手動將層級解除回 NONE', category: 'EVENT' },
+  { code: 'KILL_SWITCH_TRIGGERED', zh: 'Kill Switch 重複觸發', definition_zh: '已啟動時再次收到自動觸發來源，層級不變，僅記錄', category: 'EVENT' },
+  { code: 'KILL_SWITCH_FLATTEN_REQUESTED', zh: 'L3 平倉已請求', definition_zh: '第一步請求產生一次性確認碼，等待第二步確認', category: 'EVENT' },
+  { code: 'KILL_SWITCH_FLATTEN_REJECTED', zh: 'L3 平倉確認被拒', definition_zh: '確認碼錯誤、已使用或逾時，層級不變', category: 'EVENT' },
+  { code: 'KILL_SWITCH_CANCEL_FAILED', zh: 'Kill Switch 撤單失敗', definition_zh: 'L2 撤進場單重試用盡仍失敗', category: 'EVENT' },
 ] as const;
 
 export function getGlossaryEntry(category: GlossaryEntry['category'], code: string): GlossaryEntry | undefined {

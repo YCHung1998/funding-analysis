@@ -10,8 +10,7 @@ import type { ExchangeId } from './ids';
 import { isAllowedTransition, transitionEventType, type TransitionEntityKind } from './status';
 
 /**
- * Core event codes — tech spec §26, excluding `KILL_SWITCH_*` (⚠️ C-16,
- * not implemented until the kill-switch design is decided).
+ * Core event codes — tech spec §26.
  */
 const CORE_EVENT_TYPES = [
   'OPPORTUNITY_DETECTED',
@@ -103,12 +102,27 @@ const MARKET_DATA_LAYER_EXTENSION_EVENT_TYPES = [
   'SHORTLIST_SUBSCRIPTION_DROPPED',
 ] as const;
 
+/**
+ * Kill Switch event codes (C-16, decided 2026-10-02; design.md §6–§7 /
+ * tasks.md group 4). These replace the tech spec §26 `KILL_SWITCH_*`
+ * placeholder with the concrete six codes this change implements.
+ */
+const KILL_SWITCH_EVENT_TYPES = [
+  'KILL_SWITCH_ACTIVATED',
+  'KILL_SWITCH_RELEASED',
+  'KILL_SWITCH_TRIGGERED',
+  'KILL_SWITCH_FLATTEN_REQUESTED',
+  'KILL_SWITCH_FLATTEN_REJECTED',
+  'KILL_SWITCH_CANCEL_FAILED',
+] as const;
+
 export const TRADING_EVENT_TYPES = [
   ...CORE_EVENT_TYPES,
   ...SCHEMA_EXTENSION_EVENT_TYPES,
   ...EVENT_LOOP_EXTENSION_EVENT_TYPES,
   ...INSTRUMENT_REGISTRY_EXTENSION_EVENT_TYPES,
   ...MARKET_DATA_LAYER_EXTENSION_EVENT_TYPES,
+  ...KILL_SWITCH_EVENT_TYPES,
 ] as const;
 
 export type TradingEventType = (typeof TRADING_EVENT_TYPES)[number];
@@ -170,6 +184,12 @@ export const NO_TRADE_EVENT_TYPES: ReadonlySet<TradingEventType> = new Set([
   'SOURCE_STATUS_CHANGED',
   'RATE_LIMIT_CIRCUIT_CHANGED',
   'SHORTLIST_SUBSCRIPTION_DROPPED',
+  'KILL_SWITCH_ACTIVATED',
+  'KILL_SWITCH_RELEASED',
+  'KILL_SWITCH_TRIGGERED',
+  'KILL_SWITCH_FLATTEN_REQUESTED',
+  'KILL_SWITCH_FLATTEN_REJECTED',
+  'KILL_SWITCH_CANCEL_FAILED',
 ]);
 
 export class IllegalTransitionError extends Error {

@@ -194,6 +194,12 @@ export interface RiskConfig {
 
   entry_risk_interval_ms: number;
   position_risk_interval_ms: number;
+
+  // Kill Switch (design.md §7, C-16 decided 2026-10-02).
+  auto_kill_stale_duration_ms: number;
+  kill_switch_flatten_confirm_ttl_ms: number;
+  kill_switch_cancel_retry_max: number;
+  kill_switch_cancel_retry_interval_ms: number;
 }
 
 /**
@@ -237,6 +243,11 @@ export const DEFAULT_RISK_CONFIG: RiskConfig = {
 
   entry_risk_interval_ms: 250,
   position_risk_interval_ms: 1000,
+
+  auto_kill_stale_duration_ms: 10_000,
+  kill_switch_flatten_confirm_ttl_ms: 10_000,
+  kill_switch_cancel_retry_max: 3,
+  kill_switch_cancel_retry_interval_ms: 500,
 };
 
 // ---------------------------------------------------------------------------

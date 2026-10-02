@@ -805,36 +805,36 @@ Risk Engine 必須在 **Opportunity → Trade Creation → Order Submission** �
 
 任一必要輸入缺失（`undefined` / `null` / `NaN` / `±Infinity` / 空陣列）時該項為 `FAIL`、`value = 'UNKNOWN'`、`reason_code = 'INPUT_MISSING'`；評估時間 `now` 無效時該階段全部 FAIL。門檻與預設值見技術書 §38；`reason_code` 字面值見 `runtime/src/risk/{preTradeRisk,executionRisk,positionRisk}.ts`。
 
-| # | 階段 | check_code | 名稱 | 類別 | critical |
-|---|------|-----------|------|------|----------|
-| 1 | PRE_TRADE | `CAPITAL` | Capital | Capital | ✅ |
-| 2 | PRE_TRADE | `MAX_POSITIONS` | Max Positions | Capital | ✅ |
-| 3 | PRE_TRADE | `MAX_NOTIONAL_PER_LEG` | Max Notional Per Leg | Capital | ✅ |
-| 4 | PRE_TRADE | `MAX_LEVERAGE` | Max Leverage | Capital | ✅ |
-| 5 | PRE_TRADE | `MIN_FUNDING_SPREAD` | Min Funding Spread | Market | ✅ |
-| 6 | PRE_TRADE | `EXPECTED_NET_PNL` | Expected Net PnL | Market | ✅ |
-| 7 | PRE_TRADE | `MAX_SLIPPAGE` | Max Slippage | Execution | ✅ |
-| 8 | PRE_TRADE | `ORDERBOOK_DEPTH` | Orderbook Depth | Execution | ✅ |
-| 9 | PRE_TRADE | `EXCHANGE_CONNECTIVITY` | Exchange Connectivity | Connection | ✅ |
-| 10 | PRE_TRADE | `API_LATENCY` | API Latency | Connection | ✅ |
-| 11 | PRE_TRADE | `FUNDING_TIME_ALIGNMENT` | Funding Time Alignment | Market | ✅ |
-| 12 | PRE_TRADE | `EXISTING_EXPOSURE` | Existing Exposure | Capital | ✅ |
-| 13 | PRE_TRADE | `DATA_FRESHNESS` | Data Freshness | Connection | ✅ |
-| 14 | PRE_TRADE | `CLOCK_RELIABILITY` | Clock Reliability | Connection | ✅ |
-| 15 | PRE_TRADE | `ENTRY_GATE` | Entry Gate | Execution | ✅ |
-| 16 | ENTRY | `PRICE_DEVIATION` | Price Deviation | Market | ✅ |
-| 17 | ENTRY | `FUNDING_RATE_CHANGE` | Funding Rate Change | Market | ✅ |
-| 18 | ENTRY | `ORDER_TIMEOUT` | Order Timeout | Execution | ✅ |
-| 19 | ENTRY | `PARTIAL_FILL` | Partial Fill | Execution | ✅ |
-| 20 | ENTRY | `LEG_IMBALANCE` | Leg Imbalance | Execution | ✅ |
-| 21 | ENTRY | `EXCHANGE_CONNECTION` | Exchange Connection | Connection | ✅ |
-| 22 | ENTRY | `MARKET_VOLATILITY` | Market Volatility | Market | ✅ |
-| 23 | POSITION | `POSITION_IMBALANCE` | Position Imbalance | Execution | ✅ |
-| 24 | POSITION | `MARK_PRICE_MOVEMENT` | Mark Price Movement | Market | ✅ |
-| 25 | POSITION | `BASIS_DIVERGENCE` | Basis Divergence | Market | ✅ |
-| 26 | POSITION | `FUNDING_CHANGE` | Funding Change | Market | ✅ |
-| 27 | POSITION | `HOLDING_TIME` | Holding Time | Execution | ✅ |
-| 28 | POSITION | `EXIT_CONDITION` | Exit Condition | Execution | ✅ |
+| # | 階段 | check_code | 名稱 | 類別 | critical | failAction |
+|---|------|-----------|------|------|----------|-----------|
+| 1 | PRE_TRADE | `CAPITAL` | Capital | Capital | ✅ | — (BLOCK) |
+| 2 | PRE_TRADE | `MAX_POSITIONS` | Max Positions | Capital | ✅ | — (BLOCK) |
+| 3 | PRE_TRADE | `MAX_NOTIONAL_PER_LEG` | Max Notional Per Leg | Capital | ✅ | — (BLOCK) |
+| 4 | PRE_TRADE | `MAX_LEVERAGE` | Max Leverage | Capital | ✅ | — (BLOCK) |
+| 5 | PRE_TRADE | `MIN_FUNDING_SPREAD` | Min Funding Spread | Market | ✅ | — (BLOCK) |
+| 6 | PRE_TRADE | `EXPECTED_NET_PNL` | Expected Net PnL | Market | ✅ | — (BLOCK) |
+| 7 | PRE_TRADE | `MAX_SLIPPAGE` | Max Slippage | Execution | ✅ | — (BLOCK) |
+| 8 | PRE_TRADE | `ORDERBOOK_DEPTH` | Orderbook Depth | Execution | ✅ | — (BLOCK) |
+| 9 | PRE_TRADE | `EXCHANGE_CONNECTIVITY` | Exchange Connectivity | Connection | ✅ | — (BLOCK) |
+| 10 | PRE_TRADE | `API_LATENCY` | API Latency | Connection | ✅ | — (BLOCK) |
+| 11 | PRE_TRADE | `FUNDING_TIME_ALIGNMENT` | Funding Time Alignment | Market | ✅ | — (BLOCK) |
+| 12 | PRE_TRADE | `EXISTING_EXPOSURE` | Existing Exposure | Capital | ✅ | — (BLOCK) |
+| 13 | PRE_TRADE | `DATA_FRESHNESS` | Data Freshness | Connection | ✅ | — (BLOCK) |
+| 14 | PRE_TRADE | `CLOCK_RELIABILITY` | Clock Reliability | Connection | ✅ | — (BLOCK) |
+| 15 | PRE_TRADE | `ENTRY_GATE` | Entry Gate | Execution | ✅ | — (BLOCK；§23 Kill Switch `KILL_SWITCH_ACTIVE` 由此注入) |
+| 16 | ENTRY | `PRICE_DEVIATION` | Price Deviation | Market | ✅ | `HALT_ENTRY` |
+| 17 | ENTRY | `FUNDING_RATE_CHANGE` | Funding Rate Change | Market | ✅ | `HALT_ENTRY` |
+| 18 | ENTRY | `ORDER_TIMEOUT` | Order Timeout | Execution | ✅ | `HALT_ENTRY` |
+| 19 | ENTRY | `PARTIAL_FILL` | Partial Fill | Execution | ✅ | `EMERGENCY_EXIT` |
+| 20 | ENTRY | `LEG_IMBALANCE` | Leg Imbalance | Execution | ✅ | `EMERGENCY_EXIT` |
+| 21 | ENTRY | `EXCHANGE_CONNECTION` | Exchange Connection | Connection | ✅ | `HALT_ENTRY` |
+| 22 | ENTRY | `MARKET_VOLATILITY` | Market Volatility | Market | ✅ | `HALT_ENTRY` |
+| 23 | POSITION | `POSITION_IMBALANCE` | Position Imbalance | Execution | ✅ | `EMERGENCY_EXIT` |
+| 24 | POSITION | `MARK_PRICE_MOVEMENT` | Mark Price Movement | Market | ✅ | `EMERGENCY_EXIT` |
+| 25 | POSITION | `BASIS_DIVERGENCE` | Basis Divergence | Market | ✅ | `EMERGENCY_EXIT` |
+| 26 | POSITION | `FUNDING_CHANGE` | Funding Change | Market | ✅ | `EMERGENCY_EXIT` |
+| 27 | POSITION | `HOLDING_TIME` | Holding Time | Execution | ✅ | `EMERGENCY_EXIT` |
+| 28 | POSITION | `EXIT_CONDITION` | Exit Condition | Execution | ✅ | `EMERGENCY_EXIT` |
 
 ---
 

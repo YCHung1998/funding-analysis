@@ -2,19 +2,20 @@
  * runtime/test/scenarios/riskEngine.scenario.test.ts
  *
  * Scenario S09 (Stale Market Data) / S10 (Exchange Disconnect) — risk-engine
- * parts only (spec.md "Scenario S09 / S10 的風控部分"; S11 Kill Switch is
- * blocked by C-16 and out of scope for this change).
+ * parts only (spec.md "Scenario S09 / S10 的風控部分"). S11 (Kill Switch,
+ * C-16 decided 2026-10-02) is below.
  *
  * `test-infrastructure`'s recorded-data-replay + fixed-seed failure
  * injection harness (技術書 §37/§42) does not exist yet as its own change.
  * These scenarios are deterministic by construction (every input is an
  * explicit injected context — no actual randomness), which already
- * satisfies "same seed -> same outcome" reproducibility; "seed 42" is noted
- * here only to match the spec's scenario language, and should be replaced
- * with real recorded-data loading once `test-infrastructure` lands.
+ * satisfies "same seed -> same outcome" reproducibility; "seed 42"/"seed 7"
+ * are noted here only to match the spec's scenario language, and should be
+ * replaced with real recorded-data loading once `test-infrastructure` lands.
  */
 import { describe, expect, it } from 'vitest';
 import { VirtualClock } from '../../src/clock/virtualClock';
+import { KillSwitchCoordinator, type KillSwitchExecutionPort, type KillSwitchTradeSnapshot } from '../../src/risk/killSwitch';
 import {
   EntryRiskMonitor,
   runArmPreTradeRisk,
@@ -180,5 +181,84 @@ describe('Scenario S10 — Exchange Disconnect during ENTRY_PENDING (seed 42)', 
     expect(failedIdx).toBeGreaterThan(disconnectIdx);
 
     assertMonotonicAndTimestamped(deps.events, deps.rows);
+  });
+});
+
+describe('Scenario S11 — Kill Switch escalation L1 -> L2 -> L3 (seed 7)', () => {
+  it('ENTRY_PENDING (single leg filled), HEDGED and EXIT_PENDING trades all end CLOSED, 3 KILL_SWITCH_ACTIVATED events, monotonic timestamps', () => {
+    const clock = new VirtualClock(0);
+    const events: TradingEvent[] = [];
+    const aborted: string[] = [];
+    const cancelled: string[] = [];
+    const emergencyExits: string[] = [];
+    const rejected: string[] = [];
+    const failed: string[] = [];
+    let seq = 0;
+
+    const execution: KillSwitchExecutionPort = {
+      cancelEntryOrders: (tradeId) => cancelled.push(tradeId),
+      rejectFurtherEntry: (tradeId) => rejected.push(tradeId),
+      startEmergencyExit: (tradeId) => emergencyExits.push(tradeId),
+      abortTrade: (tradeId) => aborted.push(tradeId),
+      failTrade: (tradeId) => failed.push(tradeId),
+    };
+
+    const coordinator = new KillSwitchCoordinator({
+      execution,
+      eventSink: { emit: (e) => events.push(e) },
+      clock: { now: () => clock.now(), after: (ms, cb) => clock.at(clock.now() + ms, cb) },
+      idGenerator: () => `evt-7-${seq++}`,
+      tokenGenerator: () => `token-7-${seq++}`,
+    });
+
+    // Three trades coexist at the moment Kill Switch is first engaged.
+    const entryPending: KillSwitchTradeSnapshot = { trade_id: 'trade-entry', status: 'ENTRY_PENDING', has_open_entry_orders: true };
+    const hedged: KillSwitchTradeSnapshot = { trade_id: 'trade-hedged', status: 'HEDGED', has_open_entry_orders: false };
+    const exitPending: KillSwitchTradeSnapshot = { trade_id: 'trade-exiting', status: 'EXIT_PENDING', has_open_entry_orders: false };
+
+    clock.advanceTo(1_000);
+    // --- L1: only stops new entry, no order/position action on any of the 3 trades.
+    const l1 = coordinator.activate({ level: 'L1_STOP_ENTRY', source: 'MANUAL', reason: 'OPERATOR', trades: [entryPending, hedged, exitPending] });
+    expect(l1).toEqual({ outcome: 'ACTIVATED', level: 'L1_STOP_ENTRY' });
+    expect(cancelled).toEqual([]);
+    expect(emergencyExits).toEqual([]);
+
+    clock.advanceTo(2_000);
+    // --- L2: cancels the ENTRY_PENDING trade's entry orders; EXIT_PENDING's exit order untouched (no API to touch it with).
+    const l2 = coordinator.activate({ level: 'L2_CANCEL_ENTRY', source: 'MANUAL', reason: 'OPERATOR', trades: [entryPending, hedged, exitPending] });
+    expect(l2).toEqual({ outcome: 'ACTIVATED', level: 'L2_CANCEL_ENTRY' });
+    expect(cancelled).toEqual(['trade-entry']);
+
+    clock.advanceTo(2_500);
+    // The cancelled trade's entry orders settle single-legged (one leg filled, one leg 0 fill) -> LEG_IMBALANCE -> automatic emergency exit.
+    const classification = coordinator.handleEntryOrdersSettled('trade-entry', 0.4, cfg);
+    expect(classification).toBe('LEG_IMBALANCE');
+    expect(emergencyExits).toContain('trade-entry');
+
+    clock.advanceTo(3_000);
+    // --- L3: two-step confirmation, confirmed within 5s (< 10s TTL).
+    const { token } = coordinator.requestFlatten(cfg);
+    clock.advanceTo(8_000); // +5s
+    const l3 = coordinator.confirmFlatten({ token, trades: [hedged, exitPending] }); // trade-entry already EMERGENCY_EXIT, not passed again
+    expect(l3).toEqual({ outcome: 'ACTIVATED' });
+    expect(emergencyExits).toContain('trade-hedged'); // HEDGED Trade now flattened too
+    expect(emergencyExits).not.toContain('trade-exiting'); // EXIT_PENDING keeps its existing exit order, no duplicate
+
+    // 3 KILL_SWITCH_ACTIVATED events (L1, L2, L3) recorded.
+    const activated = events.filter((e) => e.event_type === 'KILL_SWITCH_ACTIVATED');
+    expect(activated).toHaveLength(3);
+    expect(activated.map((e) => (e.payload as { to: string }).to)).toEqual(['L1_STOP_ENTRY', 'L2_CANCEL_ENTRY', 'L3_FLATTEN']);
+
+    // Final level is L3_FLATTEN; every trade had an abort/emergency-exit command issued where applicable
+    // (matching the scenario's "最終三筆 Trade 皆 CLOSED" once paper-execution carries these out).
+    expect(coordinator.currentLevel()).toBe('L3_FLATTEN');
+    expect(aborted).toEqual([]); // none of the 3 were CREATED/PRE_FLIGHT
+    expect(emergencyExits.sort()).toEqual(['trade-entry', 'trade-hedged']);
+    expect(rejected.length).toBeGreaterThan(0);
+    expect(failed).toEqual([]); // no RECONCILIATION_ERROR in this scenario
+
+    for (let i = 1; i < events.length; i++) {
+      expect(events[i].timestamp).toBeGreaterThanOrEqual(events[i - 1].timestamp);
+    }
   });
 });
