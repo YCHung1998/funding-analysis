@@ -348,7 +348,11 @@ export class PaperExecutionAdapter implements ExecutionEngine {
   private runMatch(internal: InternalOrder): void {
     const TERMINAL = new Set(['FILLED', 'CANCELED', 'REJECTED', 'EXPIRED']);
     if (TERMINAL.has(internal.order.order_state)) return;
-    if (internal.order.order_state !== 'ACKNOWLEDGED' && internal.order.order_state !== 'PARTIALLY_FILLED') return;
+    // CANCEL_REQUESTED stays eligible to match (spec "Cancel outcomes": "Fills
+    // arriving during CANCEL_REQUESTED SHALL be recorded ... unless they
+    // complete the order"); see the completing-fill-only guard below.
+    const MATCHABLE = new Set(['ACKNOWLEDGED', 'PARTIALLY_FILLED', 'CANCEL_REQUESTED']);
+    if (!MATCHABLE.has(internal.order.order_state)) return;
 
     const snapshot = this.deps.orderBook.getOrderBook(internal.request.exchange, internal.request.symbol);
     if (!snapshot) return;
@@ -406,6 +410,15 @@ export class PaperExecutionAdapter implements ExecutionEngine {
     const newRemaining = internal.order.remaining_quantity - fillQty;
     const nextState: PaperOrder['order_state'] = newRemaining <= 1e-9 ? 'FILLED' : 'PARTIALLY_FILLED';
     const startBefore = internal.order;
+
+    if (startBefore.order_state === 'CANCEL_REQUESTED' && nextState !== 'FILLED') {
+      // Only a *completing* fill is applied while a cancel is pending (spec
+      // "without leaving CANCEL_REQUESTED unless they complete the order");
+      // a non-completing fill is deferred until the cancel resolves (success
+      // -> CANCELED keeps the prior filled_quantity; failure -> reverts to
+      // ACKNOWLEDGED/PARTIALLY_FILLED and normal matching resumes there).
+      return;
+    }
 
     const fills: Fill[] = trimmedLevels.map((lf) => {
       const notional = notionalUsdt(lf.quantity, lf.price, internal.contractMultiplier);

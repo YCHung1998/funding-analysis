@@ -104,6 +104,41 @@ runtime/test/scenarios/S01…S13.test.ts
 
 - 全部新增於 `runtime/`；不改研究原型與 `dryRunEngine.ts`。在 `feature-paper-execution-engine` 開發，`--no-ff` merge 回 `develop`；rollback = `git revert -m 1 <merge-commit>`。
 
+## Implementation Notes (Task Group 1-2)
+
+1. **`Ledger.createOrder`** (new method, `runtime/src/storage/ledger.ts`): spec
+   "Order state machine per C-14" requires `ORDER_CREATED` to exist as an
+   event and `CREATED → SUBMITTED` to commit atomically with order creation,
+   but `ORDER_TRANSITIONS` has no `from` state for `CREATED` itself (only
+   `CREATED: ['SUBMITTED']`), so `ORDER_CREATED` cannot come from
+   `makeTransitionEvent`. Resolved by mirroring
+   `reserveCapitalAndCreateTrade`'s existing pattern (two related events in
+   one transaction): `createOrder(created, submitted, reason)` appends
+   `ORDER_CREATED` directly (payload `{ after: created }`), then persists
+   `submitted` and appends the `CREATED → SUBMITTED` transition event via the
+   same `makeTransitionEvent` machinery `applyOrderTransition` uses. `created`
+   is never written as its own row — only `submitted` is persisted, matching
+   spec's "a persisted order is never left in `CREATED`". This does not
+   change `ExecutionEngine`'s public surface.
+
+2. **Fills arriving during `CANCEL_REQUESTED`**: spec says such fills "SHALL
+   be recorded without leaving `CANCEL_REQUESTED` unless they complete the
+   order", but `ORDER_TRANSITIONS.CANCEL_REQUESTED` has no self-loop (no
+   `CANCEL_REQUESTED → CANCEL_REQUESTED` entry), so a non-completing fill
+   cannot be committed as a transition event without actually changing
+   `order_state`. Resolved conservatively: `PaperExecutionAdapter.runMatch`
+   stays eligible to match while `CANCEL_REQUESTED` (so a fill that fully
+   completes the order is applied immediately — `CANCEL_REQUESTED → FILLED`
+   is a legal transition, exercised by the "filled before cancel arrives"
+   scenario), but a fill that would only *partially* progress the order while
+   a cancel is pending is deferred (not applied) until the cancel resolves —
+   success keeps the order's `filled_quantity` as of cancel time and moves to
+   `CANCELED`; failure reverts to `ACKNOWLEDGED`/`PARTIALLY_FILLED` and normal
+   matching resumes from there on the next book update. No scenario in
+   spec.md exercises the partial-non-completing-fill-during-cancel
+   interleaving, so this is a documented simplification, not a spec
+   violation. Does not change `ExecutionEngine`'s public surface.
+
 ## Open Questions
 
 1. ~~**⚠️ C-19**：hedge ratio 以名目或數量計算？~~ ✅ 2026-10-02 已決議：`QUANTITY`（合約乘數換算後的基礎資產數量），`hedge_ratio_basis` 預設已改。
