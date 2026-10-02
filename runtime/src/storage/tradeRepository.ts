@@ -438,6 +438,16 @@ export interface TradeRepository {
   getTrade(id: string): Trade | undefined;
   saveRiskCheck(rc: RiskCheck): void;
   listRiskChecksForTrade(tradeId: string): RiskCheck[];
+  /**
+   * All trades (every `trade_id`, with legs). Added for
+   * `runtime-health-reconciliation` task 2.3: `reconciler.ts` builds its
+   * consistent-snapshot read from this, then itself filters down to
+   * non-terminal + recently-closed trades (design.md Decision 1 "效能") — the
+   * filtering is the reconciler's concern, not the repository's, so this
+   * method stays a plain unfiltered listing like every other repository
+   * method here.
+   */
+  listTrades(): Trade[];
 }
 
 function placeholders(n: number): string {
@@ -461,6 +471,7 @@ export function createTradeRepository(db: SqliteDriver): TradeRepository {
        .join(', ')}`,
   );
   const selectTrade = db.prepare(`SELECT * FROM trades WHERE trade_id = ?`);
+  const selectAllTrades = db.prepare(`SELECT * FROM trades ORDER BY trade_id`);
 
   const upsertLeg = db.prepare(
     `INSERT INTO trade_legs (${TRADE_LEG_COLUMNS.join(', ')}) VALUES (${placeholders(TRADE_LEG_COLUMNS.length)})
@@ -509,6 +520,13 @@ export function createTradeRepository(db: SqliteDriver): TradeRepository {
     listRiskChecksForTrade(tradeId) {
       const rows = selectRiskChecksForTrade.all(tradeId) as RiskCheckRow[];
       return rows.map(rowToRiskCheck);
+    },
+    listTrades() {
+      const rows = selectAllTrades.all() as TradeRow[];
+      return rows.map((row) => {
+        const legRows = selectLegsForTrade.all(row.trade_id) as TradeLegRow[];
+        return rowToTrade(row, legRows.map(rowToLeg));
+      });
     },
   };
 }
