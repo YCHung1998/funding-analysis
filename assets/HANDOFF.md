@@ -192,6 +192,32 @@ B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run che
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
 
+### 2026-10-02 — Claude Sonnet 5，`paper-execution-engine` 雙腿執行（分支 `feature-paper-execution-engine-dualleg`，來自 `integration/paper-execution-engine`）
+- **做了什麼**：實作 OpenSpec change `paper-execution-engine` tasks 3.1–4.2（Task Group 1–2 已另行合併完成，不在本次範圍）：
+  - 3.1 hedge ratio 接線：`runtime/src/trading/hedgeRatioEvent.ts`（`evaluateHedgeRatio`/`resolveHedgeThreshold`/`buildHedgeRatioChangedEvent`），直接 import `position-funding-pnl` 已合併的 `runtime/src/trading/hedgeRatio.ts`（`computeHedgeRatio`/`classifyHedge`），不重新實作公式；`hedge_ratio_basis` 可切換（**預設 `QUANTITY`，依 C-19 2026-10-02 已決議**，spec.md 文字仍標 `NOTIONAL` 為舊版未同步，此處以 design.md/C-19 決議為準）、`symbol_tier_overrides`、`HEDGE_RATIO_CHANGED` 事件同時記錄 `notional_ratio`/`quantity_ratio` 供對照。
+  - 3.2 `runtime/src/trading/entryCoordinator.ts`（`EntryCoordinator`）：`PRE_FLIGHT → ENTRY_PENDING`、兩腿進場單同時送出、分類時機（所有腿終態或任一腿 0 成交先終結）、`ABORTED`（`ENTRY_TIMEOUT`/`ENTRY_REJECTED`）與資金釋放、`PARTIALLY_HEDGED` 落後腿重送（`InstrumentSource` step size 取整）與 `partial_hedge_max_duration_ms` 計時、`canSubmitEntry` 拒絕（含重送被拒）、`forceLegImbalance`、Leg 狀態事件。只依賴 `ExecutionEngine`（不 import `PaperExecutionAdapter`）。
+  - 3.3 Emergency Close（同檔 `entryCoordinator.ts`，由 `LEG_IMBALANCE`/`forceLegImbalance` 觸發）：整筆交易層級的撤單→等待全部非終態單解決後才送出 reduce-only `EMERGENCY_CLOSE`（技術書 §45：即使某腿單已終態，仍等另一腿撤單完成才送出，單一 `pendingCancels` 計數器而非逐腿）、撤單失敗重試（`cancel_retry_interval_ms`/`cancel_retry_max`）、全部腿平倉後 `CLOSED`/`EMERGENCY_EXIT` + 資金釋放、逾時 `FAILED`/`EMERGENCY_EXIT_TIMEOUT`（資金**不**釋放）。`runtime/src/trading/exitCoordinator.ts`（`ExitCoordinator.exit()`）：正常平倉，`canSubmitExit` 先行（`LOCK_WINDOW` 等拒絕時交易不變並回傳原因）、`HEDGED → EXIT_PENDING`（`EXIT_STARTED` 事件）、逾時單重送剩餘量、全平 `CLOSED`/`NORMAL_EXIT`，逾時未平 `FAILED`/`EXIT_TIMEOUT`。
+  - 4.1 `runtime/test/scenarios/`：新增 `executionHarness.ts`（共用測試骨架）+ `S01/S02/S03/S04/S05/S06/S07/S10/S12/S13.scenario.test.ts` 共 10 個檔案，每個結尾呼叫 `assertTraceability`。
+  - 過程中發現並修正 5 個真實 bug（非預先存在，皆在本次任務的測試中發現後修正，細節見 `design.md`「Implementation Notes (Task Group 3-4)」與 `tasks.md` 3.2/3.3/4.1 evidence）：(1) `Trade.legs` embedded array 在每次 `Ledger.applyTradeTransition` 經 `saveTrade` 整批覆寫 `trade_legs`，協調器必須在每次寫入前重建當下 leg 快照，否則交易層級的狀態轉換會把 leg 狀態打回進場前；(2) `runtime/test/helpers/assertTraceability.ts` 原本「某 id 最後一筆事件」的判斷跨實體不精確（`leg_id`/`trade_id` 同時出現在 `ORDER_*` 事件上），改為依實體過濾 `relevantEventTypes`；(3) `execution.submit()` 回傳的 Promise 以 microtask resolve，但其內部註冊的 `Clock.after` 計時器是同步註冊，若協調器在 `.then()` 內才記錄 `order_id` 可能被同步的 `advanceTo` 搶先觸發回呼造成漏接——改為用既有的「`order_id === client_order_id`」慣例同步記錄；(4) `forceLegImbalance` 原本誤用協調器內部的「進場解析完成」旗標（`HEDGED` 時即為 true）當作「交易已終結」的守門條件，導致已 `HEDGED` 的交易永遠無法被強制判定失衡——改為依交易實際狀態守門；(5) `runtime/src/storage/accountRepository.ts` 的 `getLatestAccountSnapshot` 原本以 `ORDER BY snapshot_time DESC, snapshot_id DESC`（`snapshot_id` 為隨機 UUID）做同時間戳的 tie-break 並不可靠，改用 SQLite 內建 `rowid`（插入順序）。
+- **驗證證據**：
+  - 每項任務皆先寫失敗測試（`entryCoordinator.test.ts`/`exitCoordinator.test.ts`/`hedgeRatioEvent.test.ts`/`ledger.tradeLegTransition.test.ts` 皆先確認紅燈——暫移走實作檔案後執行測試，`Cannot find module` 或對應錯誤——再補上實作轉綠）；5 個情境測試檔（S05–S07）亦各自先紅後綠。
+  - `npm run lint`（`tsc --noEmit`）→ 無輸出（通過）。
+  - `npm run build`（vite build）→ 1721 modules transformed，✓ built in 276ms。
+  - `npm test`（`vitest run`）→ **151 個測試檔、1272 個測試全過**（新增：`hedgeRatioEvent.test.ts` 11、`ledger.tradeLegTransition.test.ts` 5、`entryCoordinator.test.ts` 13、`exitCoordinator.test.ts` 5、10 個 scenario 檔 11 tests）。
+  - `npx openspec validate paper-execution-engine --strict` → `Change 'paper-execution-engine' is valid`。
+  - `runtime/test/executionArchitecture.test.ts`（no exchange-name literal / no `paperExecution` import from trading / no real order endpoint）持續通過；手動掃描確認交易所名稱字串只出現在 `runtime/test/`（fakes 與 scenario 檔），`runtime/src/execution/` 與 `runtime/src/trading/` 乾淨。
+  - 分支 `feature-paper-execution-engine-dualleg`，起點 `integration/paper-execution-engine`（merge commit `dabfe1a`）。
+- **沒做完 / 已知問題**：
+  - `EntryCoordinator`/`ExitCoordinator` 的 reduce-only 驗證依賴呼叫端先把 `PositionReader`（目前仍是 fake）的開倉量設好——真正的 `position-accounting` 尚未接上這個 port（它已存在、已在 `hedgeRatio.ts` 合併，但 execution 層仍用 fake `PositionReader`），留給 `position-accounting` 的執行期接線工作。
+  - Hedge ratio 公式輸入（`base_quantity`/`average_entry_price`）目前由 `EntryCoordinator` 自己從 `Fill[]` 累計，未經 `PositionReader`——design.md 已記錄此為刻意決定（避免擴張 `PositionReader` 介面影響尚未落地的 `position-accounting` 執行期整合），但代表 execution 層與未來真正的 Position 模組之間仍有一份獨立的「目前已成交量」bookkeeping，整合時需對齊或去重。
+  - `symbol_tier_overrides`/單腿 `REJECTED` 是否重試一次等仍是 design.md Open Questions，未變動。
+  - S08/S09/S11（§42 其餘情境，若屬執行層外）不在本次範圍，依 proposal.md 原定範圍（只涵蓋 S01–S07、S10、S12、S13）。
+- **下一步建議**：
+  1. `position-accounting` 落地時：把真正的 `PositionReader` 接上 `PaperExecutionAdapter`，並評估是否讓 `EntryCoordinator` 改讀 Position 模組的 `base_quantity`/`average_entry_price` 而非自行從 Fill 累計（見上「沒做完」第二點）。
+  2. Runtime 主迴圈／Trade Manager 落地時：由它呼叫 `EntryCoordinator.start()`/`ExitCoordinator.exit()`/`forceLegImbalance()`，並在 `funding-settlement-rules` 判定 `NOT_HEDGED_BEFORE_WINDOW` 等情況時呼叫 `forceLegImbalance`。
+  3. 待 `openspec/changes/paper-execution-engine` 所有 Task Group 皆確認完成且經使用者驗收後，由使用者執行 `/opsx:archive`（本次不歸檔）。
+- **需要使用者決定的事**：無新增（C-19 已決議 `QUANTITY`，本次沿用）；舊的非框架待定項（最低流動性門檻、`slippage_safety_buffer_pct`、`basis_sigma_pct`、`DEFAULT_FEE_TABLE` 官方查證、`research_min_net_pnl_usdt`）持續提醒，不影響本次交付。
+
 ### 2026-10-03（2）— Claude Sonnet 5，`position-funding-pnl`（分支 `feature-position-funding-pnl`，來自 `design/position-funding-pnl-contract-final`）
 - **做了什麼**：實作 OpenSpec change `position-funding-pnl`（capability `position-accounting` + `pnl-engine`）tasks 1.1–5.1 全部 12 項完成：
   - Position：`runtime/src/types/account.ts` 的 `PaperPosition` 加法欄位（`base_quantity`/`entry_filled_quantity`/`exit_filled_quantity`/`entry_notional_usdt`/`average_exit_price`/`realized_price_pnl_usdt`/`fees_usdt`/`slippage_attribution_usdt`/`applied_fill_ids`），搭配可逆遷移 `runtime/src/storage/migrations/002_position_accounting_fields.ts` 與 `orderRepository.ts` 持久化；`runtime/src/trading/positionManager.ts`（純函式 `applyFill`）：加權平均開倉、逐筆實現平倉 PnL（`average_entry_price` 凍結）、`fill_id` 冪等、`RECONCILIATION_ERROR`/`POSITION_OVERCLOSE`/`UNKNOWN_ORDER`/`UNSUPPORTED_FEE_ASSET`、`unrealizedPnl`；經 `Ledger.applyFill` 與 Fill/Order/`POSITION_OPENED`/`POSITION_CLOSED` 事件同一交易原子寫入。

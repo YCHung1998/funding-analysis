@@ -11,6 +11,7 @@
  */
 import { makeTransitionEvent } from '../types/event';
 import type { AccountSnapshot, Fill, PaperOrder, PaperPosition, Trade } from '../types';
+import type { TradeLeg } from '../types/trade';
 import type { AccountRepository } from './accountRepository';
 import type { SqliteDriver } from './driver';
 import type { AppendEventInput, EventStore, EventStoreClock, StoredTradingEvent } from './eventStore';
@@ -204,6 +205,75 @@ export class Ledger {
 
       for (const e of events) this.publishToUi(e);
       return { fill, order: orderAfter, position, events };
+    });
+  }
+
+  /**
+   * Trade status transition (`paper-execution-engine` design.md Decision 6:
+   * "Coordinator 以 makeTransitionEvent 產生事件，經 Ledger 同步寫入" and
+   * "進入 ABORTED、CLOSED 時同一 transaction 呼叫 releaseCapital"). When
+   * `releaseCapitalReason` is given, the capital release is committed in the
+   * SAME transaction as the trade row + `TRADE_STATUS_CHANGED` event (not by
+   * calling the separate `releaseCapital` method, to avoid nesting
+   * `db.transaction`).
+   */
+  applyTradeTransition(
+    before: Trade,
+    after: Trade,
+    reason: string,
+    opts: { releaseCapitalReason?: string } = {},
+  ): { trade: Trade; events: StoredTradingEvent[] } {
+    return this.db.transaction(() => {
+      this.repos.trade.saveTrade(after);
+      const transitionEvent = makeTransitionEvent('TRADE', before as never, after as never, reason, this.clock);
+      const event = this.eventStore.append(transitionEvent as AppendEventInput);
+      const events: StoredTradingEvent[] = [event];
+
+      if (opts.releaseCapitalReason) {
+        const latest = this.repos.account.getLatestAccountSnapshot(after.mode);
+        if (!latest) throw new Error('applyTradeTransition: no account snapshot exists');
+        const amount = after.allocated_capital_usdt;
+        const now = this.clock.now();
+        const snapshot = nextSnapshot(
+          latest,
+          { reserved_capital_usdt: latest.reserved_capital_usdt - amount, available_capital_usdt: latest.available_capital_usdt + amount },
+          'CAPITAL_RELEASED',
+          after.trade_id,
+          now,
+        );
+        this.repos.account.saveAccountSnapshot(snapshot);
+        const capitalEvent = this.eventStore.append({
+          event_id: crypto.randomUUID(),
+          event_type: 'CAPITAL_RELEASED',
+          timestamp: now,
+          trade_id: after.trade_id,
+          payload: { snapshot, reason: opts.releaseCapitalReason },
+        });
+        events.push(capitalEvent);
+      }
+
+      for (const e of events) this.publishToUi(e);
+      return { trade: after, events };
+    });
+  }
+
+  /** Leg status transition (design.md Decision 6); `LEG_STATUS_CHANGED` event via `makeTransitionEvent`. */
+  applyLegTransition(before: TradeLeg, after: TradeLeg, reason: string): { leg: TradeLeg; event: StoredTradingEvent } {
+    return this.db.transaction(() => {
+      this.repos.trade.saveTradeLeg(after);
+      const transitionEvent = makeTransitionEvent('LEG', before as never, after as never, reason, this.clock);
+      const event = this.eventStore.append(transitionEvent as AppendEventInput);
+      this.publishToUi(event);
+      return { leg: after, event };
+    });
+  }
+
+  /** Generic single-event commit (e.g. `HEDGE_RATIO_CHANGED`, `EMERGENCY_EXIT_STARTED`, `EXIT_STARTED` — observational, not a state transition). */
+  appendEvent(input: AppendEventInput): StoredTradingEvent {
+    return this.db.transaction(() => {
+      const event = this.eventStore.append(input);
+      this.publishToUi(event);
+      return event;
     });
   }
 }

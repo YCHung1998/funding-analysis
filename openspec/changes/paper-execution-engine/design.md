@@ -154,6 +154,93 @@ runtime/test/scenarios/S01…S13.test.ts
    change `ExecutionEngine`'s public surface (`OrderRequest.client_order_id`
    was already required).
 
+## Implementation Notes (Task Group 3-4)
+
+1. **Hedge-ratio leg input is coordinator-tracked, not from `PositionReader`**:
+   `PositionReader.getOpenQuantity(legId)` (executionInterface.ts) returns only
+   a quantity, with no average entry price — but `computeHedgeRatio`'s
+   `HedgeLegInput` needs both (`base_quantity`, `average_entry_price`) to
+   compute the `NOTIONAL` basis. Extending that port's shape would touch an
+   interface `position-accounting`'s real implementation will also need to
+   satisfy, which is out of this task's scope to decide unilaterally.
+   Resolved by having `EntryCoordinator` track each leg's cumulative
+   filled_quantity/notional itself, from the `Fill[]` it already receives via
+   `ExecutionEngine.onOrderUpdate` — the same fills it needs for its own
+   bookkeeping regardless. `PositionReader` is still the port the *adapter*
+   uses for reduce-only validation (spec "Reduce-only close orders"); this
+   does not change `ExecutionEngine`'s or `PositionReader`'s public shape.
+
+2. **`Trade.legs` must be re-snapshotted on every trade-level write**:
+   `Trade.legs` is an embedded array, and `TradeRepository.saveTrade`
+   (invoked by every `Ledger.applyTradeTransition`) unconditionally
+   rewrites every `trade_legs` row from `trade.legs`. `EntryCoordinator`
+   keeps its own per-leg state (`LegFillState`) updated via
+   `Ledger.applyLegTransition` directly — if the `Trade` object passed to a
+   *later* `applyTradeTransition` call still carries the stale `legs` array
+   captured once at `start()`, that call silently reverts every leg row back
+   to its pre-entry status. Resolved with a `legsSnapshot(state)` helper
+   that rebuilds `Trade.legs` from the coordinator's current per-leg state
+   on every `Trade` patch. `ExitCoordinator` avoids this entirely by never
+   holding a long-lived `Trade` object — it re-reads `TradeRepository.getTrade`
+   at the start of `exit()` and only ever patches that fresh read.
+
+3. **Write order: legs before the trade-level transition**:
+   `runtime/test/helpers/assertTraceability.ts`'s per-entity check originally
+   determined an entity's "current status" from the single chronologically
+   *last* event carrying that entity's id — but `leg_id` appears on both
+   `LEG_STATUS_CHANGED` events and every `ORDER_*` event for orders on that
+   leg, and `trade_id` appears on essentially every event type for that
+   trade. A `TRADE_STATUS_CHANGED` event followed later (even by an
+   unrelated async order settling) by any order/leg event with a `payload.to`
+   would be misread as a traceability violation. Fixed at the root in
+   `assertTraceability.ts` by adding `relevantEventTypes` per entity kind
+   (`trades`: `TRADE_CREATED`/`TRADE_STATUS_CHANGED`; `trade_legs`:
+   `LEG_STATUS_CHANGED`; `orders`: the `ORDER_*` set — this one was already
+   effectively correct since `order_id` is unique to orders;
+   `funding_settlements`: `FUNDING_SETTLED`/`FUNDING_STATUS_CHANGED`). As a
+   complementary discipline (not a full substitute, since async order
+   activity can still trail a trade-level event), both coordinators persist
+   leg-level writes *before* the corresponding trade-level transition within
+   each resolution step (e.g. `resolveHedged` writes both legs `OPEN` before
+   writing `Trade.status = 'HEDGED'`), so the trade event is the
+   chronologically later of the two at the moment of resolution.
+
+4. **Deterministic order ids must be set synchronously, not from `submit()`'s
+   resolved value**: `PaperExecutionAdapter.submit()` is an `async` method
+   whose body contains no `await`, so all of its synchronous work — including
+   registering the `Clock.after` ACK/lifetime timers — completes before the
+   method returns, but the returned `Promise<PaperOrder>` itself only
+   resolves on a later microtask. A coordinator that calls
+   `execution.submit(...).then(order => { trackedId = order.order_id })` and
+   then (in the same synchronous turn, no intervening `await`) calls
+   `clock.advanceTo(...)` can have the newly-registered timers fire — and
+   deliver an `onOrderUpdate` notification for that order — *before* the
+   `.then()` callback has run, silently dropping the first update (observed
+   as emergency-close orders and `PARTIALLY_HEDGED` resubmissions never
+   resolving in scenario tests). Resolved by relying on the existing
+   deterministic-identity convention (`order_id === client_order_id`, task
+   2.6's Implementation Note 3) and setting the tracked id synchronously
+   from the already-known `client_order_id`, before/without waiting on the
+   `submit()` promise at all.
+
+5. **`forceLegImbalance` is gated on trade status, not the coordinator's
+   internal "entry resolved" flag**: `EntryCoordinator`'s internal
+   `phase === 'DONE'` means "no more entry-order resolution work to do" and
+   is set the moment a trade reaches `HEDGED` — it does NOT mean the trade is
+   terminal. Gating `forceLegImbalance` on `phase === 'DONE'` (an earlier
+   draft) silently no-op'd exactly the case the spec calls out (§13
+   "`NOT_HEDGED_BEFORE_WINDOW` at `hedged_by`" on an already-`HEDGED` trade).
+   Fixed to gate on the trade's actual status instead (`CLOSED` / `ABORTED` /
+   `FAILED` / already-`EMERGENCY_EXIT`).
+
+6. **Emergency-close cancel-then-close ordering is trade-wide, not
+   per-leg**: spec's S12 example ("short order still pending is canceled
+   before the long emergency close order is submitted") cancels EVERY
+   leg's non-terminal entry order before submitting ANY `EMERGENCY_CLOSE`
+   order, even for a leg whose own order was already terminal. Implemented
+   as a single `pendingCancels` counter across all legs in `emergencyClose`;
+   `submitEmergencyCloseOrders` only runs once it reaches zero.
+
 ## Open Questions
 
 1. ~~**⚠️ C-19**：hedge ratio 以名目或數量計算？~~ ✅ 2026-10-02 已決議：`QUANTITY`（合約乘數換算後的基礎資產數量），`hedge_ratio_basis` 預設已改。

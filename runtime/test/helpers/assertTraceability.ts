@@ -21,15 +21,63 @@ interface EntityCheck {
   table: string;
   idColumn: string;
   statusColumn: string;
-  /** `event_type` column value(s) whose `payload.to` represents this entity's status after the transition. */
   eventIdColumn: 'trade_id' | 'order_id' | 'leg_id';
+  /**
+   * `event_type`s that represent THIS entity's own transitions. Several
+   * entity kinds share the same id column — e.g. `leg_id` appears on both
+   * `LEG_STATUS_CHANGED` and every `ORDER_*` event for orders on that leg,
+   * and `trade_id` appears on `TRADE_STATUS_CHANGED` as well as every
+   * order/leg/capital/observational event for that trade. Without this
+   * filter, "the last event carrying this id" could be e.g. an
+   * `ORDER_CANCELED` event (whose `payload.to` is an `OrderState` like
+   * `'CANCELED'`) chronologically following a trade_legs row's real last
+   * `LEG_STATUS_CHANGED` — a false mismatch, not a real traceability gap
+   * (paper-execution-engine task 3.2 fix; order_id is unique to orders so
+   * this never mattered for the `orders` check itself).
+   */
+  relevantEventTypes: readonly string[];
 }
 
 const ENTITY_CHECKS: EntityCheck[] = [
-  { table: 'trades', idColumn: 'trade_id', statusColumn: 'status', eventIdColumn: 'trade_id' },
-  { table: 'orders', idColumn: 'order_id', statusColumn: 'order_state', eventIdColumn: 'order_id' },
-  { table: 'trade_legs', idColumn: 'leg_id', statusColumn: 'status', eventIdColumn: 'leg_id' },
-  { table: 'funding_settlements', idColumn: 'funding_id', statusColumn: 'settlement_status', eventIdColumn: 'trade_id' },
+  {
+    table: 'trades',
+    idColumn: 'trade_id',
+    statusColumn: 'status',
+    eventIdColumn: 'trade_id',
+    relevantEventTypes: ['TRADE_CREATED', 'TRADE_STATUS_CHANGED'],
+  },
+  {
+    table: 'orders',
+    idColumn: 'order_id',
+    statusColumn: 'order_state',
+    eventIdColumn: 'order_id',
+    relevantEventTypes: [
+      'ORDER_CREATED',
+      'ORDER_SUBMITTED',
+      'ORDER_ACK',
+      'ORDER_PARTIAL_FILL',
+      'ORDER_FILL',
+      'ORDER_CANCEL_REQUESTED',
+      'ORDER_CANCELED',
+      'ORDER_CANCEL_REJECTED',
+      'ORDER_REJECTED',
+      'ORDER_EXPIRED',
+    ],
+  },
+  {
+    table: 'trade_legs',
+    idColumn: 'leg_id',
+    statusColumn: 'status',
+    eventIdColumn: 'leg_id',
+    relevantEventTypes: ['LEG_STATUS_CHANGED'],
+  },
+  {
+    table: 'funding_settlements',
+    idColumn: 'funding_id',
+    statusColumn: 'settlement_status',
+    eventIdColumn: 'trade_id',
+    relevantEventTypes: ['FUNDING_SETTLED', 'FUNDING_STATUS_CHANGED'],
+  },
 ];
 
 interface TradingEventRow {
@@ -76,7 +124,7 @@ export function assertTraceability(db: SqliteDriver, opts: { trade_id?: string }
         .all(check.eventIdColumn === check.idColumn || check.eventIdColumn === 'order_id' || check.eventIdColumn === 'leg_id' ? id : row.trade_id) as TradingEventRow[];
 
       const relevantEvents = eventRows
-        .filter((e) => matchesEntityId(check, e, id))
+        .filter((e) => matchesEntityId(check, e, id) && check.relevantEventTypes.includes(e.event_type))
         .map((e) => ({ event: e, to: effectiveTo(e, check.statusColumn) }))
         .filter((e): e is { event: TradingEventRow; to: unknown } => e.to !== undefined);
 
