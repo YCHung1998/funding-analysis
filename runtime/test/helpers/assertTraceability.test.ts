@@ -13,6 +13,7 @@ import { EventStore } from '../../src/storage/eventStore';
 import { Ledger } from '../../src/storage/ledger';
 import { migrate } from '../../src/storage/migrate';
 import { migration001 } from '../../src/storage/migrations/001_initial';
+import { migration002 } from '../../src/storage/migrations/002_position_accounting_fields';
 import { createOrderRepository } from '../../src/storage/orderRepository';
 import { createAccountRepository } from '../../src/storage/accountRepository';
 import { createTradeRepository } from '../../src/storage/tradeRepository';
@@ -39,7 +40,7 @@ describe('assertTraceability', () => {
 
   beforeEach(() => {
     db = tmpDriver();
-    migrate(db, [migration001]);
+    migrate(db, [migration001, migration002]);
     clock = new VirtualClock(1000);
     tradeRepo = createTradeRepository(db);
     orderRepo = createOrderRepository(db);
