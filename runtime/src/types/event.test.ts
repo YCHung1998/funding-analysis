@@ -4,8 +4,17 @@ import { makeTransitionEvent, IllegalTransitionError, NO_TRADE_EVENT_TYPES, TRAD
 const fixedClock = (t: number) => ({ now: () => t });
 
 describe('TradingEventType', () => {
-  it('does not include KILL_SWITCH_* codes (C-16 not implemented)', () => {
-    expect(TRADING_EVENT_TYPES.some((c) => c.startsWith('KILL_SWITCH'))).toBe(false);
+  it('includes the six KILL_SWITCH_* codes (C-16 decided 2026-10-02)', () => {
+    for (const code of [
+      'KILL_SWITCH_ACTIVATED',
+      'KILL_SWITCH_RELEASED',
+      'KILL_SWITCH_TRIGGERED',
+      'KILL_SWITCH_FLATTEN_REQUESTED',
+      'KILL_SWITCH_FLATTEN_REJECTED',
+      'KILL_SWITCH_CANCEL_FAILED',
+    ]) {
+      expect(TRADING_EVENT_TYPES).toContain(code);
+    }
   });
 
   it('includes instrument-registry and event-loop extension codes', () => {

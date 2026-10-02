@@ -301,6 +301,27 @@ Opportunity 不能永久有效。✅ C-05（D-3）：以**失效規則**取代�
 
 任何 Critical Fail → **BLOCK**，並寫入 `risk_checks` 與 `Opportunity.status = 'REJECTED'`（未交易也要可查）。
 
+### 11.1 28 項檢查對照表
+
+完整表格（`check_code`/名稱/類別/critical/failAction）見規格書 §22.1（`runtime/src/risk/checks/registry.ts` 的 `PRE_TRADE_CHECKS`/`ENTRY_CHECKS`/`POSITION_CHECKS` 三個陣列）；本節僅重複本頁已列出的 Pre-Flight 12 項標籤與其 `check_code` 的對應，供對照：
+
+| 本節標籤 | check_code |
+|---------|-----------|
+| Account | `EXISTING_EXPOSURE` |
+| Capital | `CAPITAL` |
+| Position Count | `MAX_POSITIONS` |
+| Position Limit | `MAX_NOTIONAL_PER_LEG` / `MAX_LEVERAGE` |
+| Funding | `MIN_FUNDING_SPREAD` / `FUNDING_TIME_ALIGNMENT` |
+| Price | `MAX_SLIPPAGE` |
+| Orderbook | `ORDERBOOK_DEPTH` |
+| Slippage | `MAX_SLIPPAGE` |
+| API Health | `API_LATENCY` |
+| Data Freshness | `DATA_FRESHNESS` |
+| Exchange Status | `EXCHANGE_CONNECTIVITY` |
+| Existing Exposure | `EXISTING_EXPOSURE` |
+
+ENTRY / POSITION 持續檢查不在本頁清單內（那是建立 Trade 前的 Pre-Flight 12 項），完整 28 項（含 `CLOCK_RELIABILITY`、`ENTRY_GATE` 與 ENTRY/POSITION 兩階段）與 `failAction` 見規格書 §22.1。
+
 ---
 
 ## 12. Capital Reservation
@@ -603,6 +624,54 @@ interface GlossaryEntry {
 
 UI 規則：平常只顯示英文代碼；點 `?` 顯示中文名稱與定義。內容以規格書 §9、§18、§26 的表格為準。
 
+### 27.2 `reason_code` 中英對照
+
+`reason_code` 不是狀態 / 事件代碼（不受 `GlossaryEntry.category` 清單與 `glossary.test.ts` 的完整性檢查約束），而是 `risk_checks` 與 `RISK_CHECK_FAILED`/`WARN` 項目的失敗/警告原因，字面值見 `runtime/src/risk/{preTradeRisk,executionRisk,positionRisk}.ts`。下表為中英對照，供 UI `?` 提示與文件使用：
+
+| reason_code | 中文 |
+|---|---|
+| `INSUFFICIENT_CAPITAL` | 可用資金不足 |
+| `MAX_POSITIONS` | 超過最大持倉數上限 |
+| `MAX_NOTIONAL_EXCEEDED` | 單腿名目超過上限 |
+| `MAX_LEVERAGE_EXCEEDED` | 槓桿超過上限 |
+| `BELOW_MIN_SPREAD` | 費率價差低於最低門檻 |
+| `BELOW_MIN_NET_PNL` | 預期淨利低於最低門檻 |
+| `MAX_SLIPPAGE_EXCEEDED` | 預估滑價超過上限 |
+| `INSUFFICIENT_DEPTH` | 盤口深度不足以覆蓋目標名目 |
+| `EXCHANGE_DISCONNECTED` | 交易所連線中斷 |
+| `INSTRUMENT_NOT_TRADING` | 合約非可交易狀態 |
+| `API_LATENCY_HIGH` | API 延遲超過門檻 |
+| `FUNDING_NOT_ALIGNED` | 資金費結算時間未對齊 |
+| `FUNDING_INTERVAL_TOO_SHORT` | 資金費結算週期過短 |
+| `EXCHANGE_NOT_TRADABLE` | 交易所端合約不可交易 |
+| `ENTRY_WINDOW_CLOSED` | 已超過進場截止時間 |
+| `EXISTING_EXPOSURE` | 同幣種已有未平倉曝險 |
+| `EXCHANGE_EXPOSURE_LIMIT` | 單一交易所曝險超過上限 |
+| `STALE_MARKET_DATA` | 行情資料過舊 |
+| `CLOCK_UNRELIABLE` | 時鐘校正不可靠或已過期 |
+| `TRADE_FAILED_PENDING_REVIEW` | Trade 失敗，待人工確認 |
+| `RECONCILIATION_ERROR` | 對帳錯誤，帳本不可信 |
+| `PRICE_DEVIATION` | 進場價偏離目標價過多 |
+| `FUNDING_RATE_CHANGED` | 費率價差反轉或大幅縮小 |
+| `ORDER_TIMEOUT` | 進場單逾時 |
+| `PARTIAL_HEDGE_TIMEOUT` | 部分對沖持續超過上限 |
+| `PARTIAL_HEDGE_PENDING`（WARN） | 部分對沖中，尚未超時 |
+| `LEG_IMBALANCE` | 單腿失衡（hedge ratio 低於下門檻） |
+| `MARKET_VOLATILITY` | 短窗波動度超過門檻 |
+| `POSITION_IMBALANCE` | 持倉失衡（hedge ratio 低於下門檻） |
+| `POSITION_IMBALANCE_WARN`（WARN） | 持倉失衡警告（低於 hedged_min 但未達下門檻） |
+| `MARK_PRICE_ADVERSE` | 未實現虧損對保證金比例過高 |
+| `BASIS_DIVERGENCE` | 基差偏離超過門檻 |
+| `BASIS_DIVERGENCE_WARN`（WARN） | 基差偏離警告（超過一半門檻） |
+| `FUNDING_FLIPPED` | 預期資金費轉為不利且早於 `hedged_by` |
+| `FUNDING_FLIPPED_LOCKED`（WARN） | 預期資金費不利但已過 `hedged_by`，僅警告 |
+| `HOLDING_TIME_EXCEEDED` | 持倉時間超過上限 |
+| `EXIT_STALLED` | 出場超過 `emergency_exit_timeout_ms` 未完成 |
+| `INPUT_MISSING` | 必要輸入缺失，一律視為 FAIL |
+| `KILL_SWITCH_ACTIVE` | Kill Switch 已啟動（L1 以上），`ENTRY_GATE` 注入的來源 |
+
+Kill Switch 的六個事件碼（`KILL_SWITCH_ACTIVATED`/`RELEASED`/`TRIGGERED`/`FLATTEN_REQUESTED`/`FLATTEN_REJECTED`/`CANCEL_FAILED`）**是**事件代碼，已直接寫入 `runtime/src/types/glossary.ts`（`category: 'EVENT'`），受 `glossary.test.ts` 完整性檢查約束，不在本節的 `reason_code` 表格內重複列出。
+
 ---
 
 ## 28. Database
@@ -831,6 +900,12 @@ interface PaperTradingConfig {
     max_holding_time_ms: number;             // 預設 600000
     entry_risk_interval_ms: number;          // 預設 250
     position_risk_interval_ms: number;       // 預設 1000
+
+    // kill-switch（規格書 §23、§34 C-16，2026-10-02 已決議）
+    auto_kill_stale_duration_ms: number;          // 預設 10000；行情持續過舊達此時長 → 自動 L1
+    kill_switch_flatten_confirm_ttl_ms: number;   // 預設 10000；L3 兩段式確認碼有效期
+    kill_switch_cancel_retry_max: number;         // 預設 3；L2 撤單被拒的最大重試次數
+    kill_switch_cancel_retry_interval_ms: number; // 預設 500；L2 撤單重試間隔
 
     // net-cost-model（規格書 §17、§20.2；目前為 ExpectedNetConfig，尚未接入持久化設定）
     fee_table: FeeTierConfig[];              // 待定：DEFAULT_FEE_TABLE 未經官方查證
