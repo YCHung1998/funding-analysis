@@ -14,7 +14,8 @@
   - Evidence: `runtime/src/execution/matching.test.ts` (pure `walkBook`/`averageFillPrice`/`slippagePct`/`isValidStep` unit tests — §14 example avg 100.006 / fee 12.50075, SELL descending bids, LIMIT price bound, not-best-ask, empty book) + `runtime/src/execution/paperExecution.matching.test.ts` (adapter integration: two `Fill` rows at 100.00x100/100.01x150 persisted via `Ledger.applyFill` synchronously, SELL walks bids, `INVALID_QUANTITY_STEP` rejection).
 - [x] 2.3 部分成交與剩餘量：GTC 於盤口更新重撮、IOC `EXPIRED`、LIMIT 限價、`enable_partial_fill = false`
   - Evidence: `runtime/src/execution/paperExecution.partialFill.test.ts` — §15 example (1000 requested / 300 available -> `PARTIALLY_FILLED` + `ORDER_PARTIAL_FILL`), GTC re-match on a later `OrderBookSource.onUpdate` -> `FILLED` + `ORDER_FILL`, IOC remainder -> `EXPIRED` + `ORDER_EXPIRED`, LIMIT price bound (100 of 250 fills), `enable_partial_fill=false` withholds any fill until full depth is available.
-- [ ] 2.4 `max_order_lifetime_ms`（規格書 §12 時間線）與 `ack_timeout_ms`（晚到 ACK、訂單遺失）
+- [x] 2.4 `max_order_lifetime_ms`（規格書 §12 時間線）與 `ack_timeout_ms`（晚到 ACK、訂單遺失）
+  - Evidence: `runtime/src/execution/paperExecution.timeout.test.ts` — §12 no-fill timeline (`ORDER_TIMEOUT` at submit+800, `cancel_request_time`/`cancel_ack_time` at +800/+868, final `CANCELED`, `filled_quantity=0`); late-ACK (`ORDER_ACK_TIMEOUT` at t=300, `ACKNOWLEDGED` at t=350 from the still-pending real ack timer); lost order (`ack_loss_probability=1` -> `REJECTED` `ORDER_NOT_FOUND_AFTER_ACK_TIMEOUT` at t=300).
 - [ ] 2.5 撤單：成功（保留部分成交）、失敗回到原狀態 + `ORDER_CANCEL_REJECTED`、撤單前已全部成交、終態不可撤；reduce-only 驗證與 `REDUCE_ONLY_EXCEEDS_POSITION`；Cancel ≠ Close 測試
 - [ ] 2.6 模擬延遲與故障注入（`rng.ts`、`failureInjection.ts`：reject、fill probability、ack loss、cancel failure、disconnect、stale、liquidity collapse、price spike）；同 seed 事件序列完全相同、異 seed 不同
 
