@@ -178,7 +178,7 @@ HEDGED / EXIT_PENDING ──▶ Position 6 項 ──▶ EMERGENCY_EXIT 請求 �
 | `CLOCK_UNRELIABLE` | **不觸發**（由 Pre-Trade 逐筆阻擋） | L1 | L1 |
 
 - 推薦理由：自動觸發只停止新交易，不主動動部位——斷線時送撤單 / 平倉單本身就不可靠；對帳錯誤代表帳本不可信，此時自動平倉可能依錯誤數量下單，應交人處理。L3 永不自動。
-- 推薦方案的延伸（非 C-16 原題，另列 Open Question KS-6）：解除只能手動、清理中拒絕解除、來源恢復不自動解除。
+- 推薦方案的延伸（非 C-16 原題，✅ KS-6 已於 2026-10-03 決議）：解除只能手動、清理中拒絕解除、來源恢復不自動解除。
 
 ### 7. Kill Switch 實作要點（✅ C-16 已決議，依本方案開工）
 
@@ -226,9 +226,9 @@ HEDGED / EXIT_PENDING ──▶ Position 6 項 ──▶ EMERGENCY_EXIT 請求 �
 
 ## Open Questions
 
-1. **C-16（Kill Switch 五個子問題）**：見 Decision 6，待使用者決議；決議後更新規格書 §23 / §31 / §34、技術書 §26 / §33 與本 change 的 `kill-switch` spec、tasks 4.x。
-2. **C-19（hedge ratio 以名目或數量計算）**：影響 EN05、PO01 與 L2 分類的輸入值；本 change 以 `position-accounting.hedgeRatio()` 抽象，決議後不需改動風控程式結構，但需補一組「兩所價差 1% 且數量相同」的測試。
-3. **KS-6（C-16 延伸）Kill Switch 解除規則**：推薦「只能手動解除、清理中拒絕、來源恢復不自動解除」；替代方案為「斷線 / 資料過舊恢復健康 60 秒後自動解除 L1」。
+1. ~~**C-16（Kill Switch 五個子問題）**~~ ✅ 2026-10-02 已決議（採推薦方案）：規格書 §23 / §34、技術書 §33 已更新；本 change tasks 4.x 已實作（`feature-kill-switch-c16`）。
+2. ~~**C-19（hedge ratio 以名目或數量計算）**~~ ✅ 2026-10-02 已決議：`QUANTITY`（合約乘數換算後的基礎資產數量），見規格書 §14 / §34。
+3. ~~**KS-6（C-16 延伸）Kill Switch 解除規則**~~ ✅ 2026-10-03 已決議：採推薦方案「只能手動解除、清理中拒絕、來源恢復不自動解除」；`killSwitch.ts` 的 `release()` 本來就是依此實作，無需改程式。
 4. **系統層事件的 `trade_id`**：`trading-schema-types` 已提議 `trade_id: string | null`，但允許 `null` 的事件清單不含 `RISK_CHECK_*`（ARM 時尚無 Trade）與 `KILL_SWITCH_*`；需請該 change 加入（`KILL_SWITCH_*` 於 C-16 決議後由 tasks 4.1 加入事件碼與術語表）。
 9. **`ENTRY_HALT_REQUESTED` 與 Kill Switch 自動 L1 的分工**：`runtime-health-reconciliation` 預定發出帳戶層 `ENTRY_HALT_REQUESTED`；C-16 決議前由 `ENTRY_GATE` 注入來源直接接收（行為等同 L1 但不經 Kill Switch 狀態）；決議後是否改由 Kill Switch 統一轉為 `KILL_SWITCH_ACTIVATED`（source `AUTO`），避免兩套停止進場機制？
 5. **`RiskStatusReport` enum 擴充**：舊型別的 `action_recommendation` 沒有 `HALT_ENTRY`，目前映射為 `ABORT_PRE_FLIGHT`；是否由 `trading-schema` 在 v0.2 新增 `HALT_ENTRY` 與 `stage` 欄位？

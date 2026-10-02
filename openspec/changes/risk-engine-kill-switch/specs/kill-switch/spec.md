@@ -104,7 +104,7 @@ L3 生效時系統 SHALL 先執行 L2 的全部行為，再對每一筆持有非
 - **THEN** 層級維持 L2，產生一筆 `KILL_SWITCH_TRIGGERED` 事件
 
 ### Requirement: 只能手動解除
-（KS-6，design.md Open Question 3：非 C-16 原題的延伸，目前依推薦方案實作；若使用者後續決議不同解除規則，需回頭修改本節與 `killSwitch.ts` 的 `release()`）Kill Switch SHALL 只能由操作者手動解除回 `NONE`，並產生 `KILL_SWITCH_RELEASED` 事件（含 `from`、`actor`、`reason`）。L2 / L3 引發的撤單或緊急平倉仍在進行中時，解除 MUST 被拒絕（`KILL_SWITCH_CLEANUP_IN_PROGRESS`）。自動觸發的來源恢復正常 MUST NOT 自動解除。
+（KS-6，design.md Open Question 3：非 C-16 原題的延伸，✅ 2026-10-03 已決議採推薦方案，不會再變動）Kill Switch SHALL 只能由操作者手動解除回 `NONE`，並產生 `KILL_SWITCH_RELEASED` 事件（含 `from`、`actor`、`reason`）。L2 / L3 引發的撤單或緊急平倉仍在進行中時，解除 MUST 被拒絕（`KILL_SWITCH_CLEANUP_IN_PROGRESS`）。自動觸發的來源恢復正常 MUST NOT 自動解除。
 
 #### Scenario: 連線恢復不自動解除
 - **WHEN** 因 Bybit 斷線自動進入 L1，30 秒後 Bybit 恢復 `CONNECTED`
