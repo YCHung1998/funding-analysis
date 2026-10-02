@@ -1,7 +1,7 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 
+ *
  * Full-Stack Arbitrage Engine Server (Pionex × Binance × Bybit × Bitget × OKX)
  */
 
@@ -10,6 +10,30 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import fs from 'fs';
 import dotenv from 'dotenv';
+import { buildLiveScanCandidates } from './server/liveScanRegistry';
+import { resolveKlinesSymbol } from './server/liveKlinesResolve';
+import { InstrumentRegistry } from './runtime/src/market/instruments/registry';
+import { UpstreamError } from './runtime/src/market/http/publicRestClient';
+import { GuardedRestClient } from './runtime/src/market/http/guardedRestClient';
+import { SourceStatusTracker } from './runtime/src/market/sourceStatus';
+import { MarketState } from './runtime/src/market/state/marketState';
+import { OrderBookService } from './runtime/src/market/orderBookService';
+import { MarketDataService } from './runtime/src/market/marketDataService';
+import { queryServerTime } from './runtime/src/market/serverTime';
+import { RealClock } from './runtime/src/clock/realClock';
+import { normalizeBinanceInstruments } from './runtime/src/adapters/binance/instruments';
+import { normalizeBybitInstruments } from './runtime/src/adapters/bybit/instruments';
+import { normalizeOkxInstruments } from './runtime/src/adapters/okx/instruments';
+import { normalizeBitgetInstruments } from './runtime/src/adapters/bitget/instruments';
+import { normalizePionexInstruments } from './runtime/src/adapters/pionex/instruments';
+import { binanceMarketDataAdapter } from './runtime/src/adapters/binance/marketData';
+import { bybitMarketDataAdapter } from './runtime/src/adapters/bybit/marketData';
+import { okxMarketDataAdapter } from './runtime/src/adapters/okx/marketData';
+import { bitgetMarketDataAdapter } from './runtime/src/adapters/bitget/marketData';
+import { pionexMarketDataAdapter } from './runtime/src/adapters/pionex/marketData';
+import { buildLegDataFromMarketState, buildSourcesSnapshot, buildDataAsOf } from './server/liveScanFromMarketState';
+import type { ExchangeId, EventSink, TradingEvent, InstrumentSourceStatus } from './runtime/src/market/instruments/types';
+import type { RateLimitRule, MarketDataAdapter } from './runtime/src/market/types';
 
 dotenv.config();
 
@@ -18,354 +42,386 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// In-memory cache for live market data to protect exchange rate limits (5-second cache)
-let liveScanCache: { timestamp: number; data: any } | null = null;
-const CACHE_TTL_MS = 5000;
+export type ExchangeName = 'Pionex' | 'Binance' | 'Bybit' | 'Bitget' | 'OKX';
 
-// In-memory cache for OKX funding rates (30s TTL to prevent spamming individual queries)
-const okxFundingRateCache = new Map<string, { rate: number; nextFundingTime: number; ts: number }>();
+// --- Instrument Registry wiring (openspec/changes/instrument-registry) ---
+// server.ts 不在 runtime/src/ 內，可直接讀系統時間 / 使用計時器（design.md Decision 9）。
 
-/**
- * Normalizes symbols into standard base symbol (e.g. BTC_USDT_PERP -> BTC, BTC-USDT-SWAP -> BTC, 1000PEPEUSDT -> PEPE)
- */
-function extractBaseSymbol(raw: string): string {
-  let s = raw.toUpperCase()
-    .replace('-SWAP', '')
-    .replace('_PERP', '')
-    .replace('_USDT', '')
-    .replace('-USDT', '')
-    .replace('USDT', '')
-    .replace(/[-_]/g, '');
-  
-  if (s.startsWith('1000000')) s = s.replace('1000000', '');
-  else if (s.startsWith('100000')) s = s.replace('100000', '');
-  else if (s.startsWith('10000')) s = s.replace('10000', '');
-  else if (s.startsWith('1000')) s = s.replace('1000', '');
+const RECENT_EVENTS_LIMIT = 200;
+const recentEvents: TradingEvent[] = [];
+const consoleEventSink: EventSink = {
+  emit(event) {
+    recentEvents.push(event);
+    if (recentEvents.length > RECENT_EVENTS_LIMIT) recentEvents.shift();
+    console.log(`[registry-event] ${JSON.stringify(event)}`);
+  },
+};
 
-  return s;
+const registry = new InstrumentRegistry(consoleEventSink);
+
+// --- websocket-data-layer wiring（task 4.2：嵌入式行情服務） ---------------
+
+const clock = new RealClock();
+const sourceStatus = new SourceStatusTracker({ eventSink: consoleEventSink, now: () => clock.now() });
+
+const marketDataAdapters: Partial<Record<ExchangeId, MarketDataAdapter>> = {
+  Binance: binanceMarketDataAdapter,
+  Bybit: bybitMarketDataAdapter,
+  OKX: okxMarketDataAdapter,
+  Bitget: bitgetMarketDataAdapter,
+  Pionex: pionexMarketDataAdapter,
+};
+
+const rateLimitRulesByExchange = Object.fromEntries(
+  Object.entries(marketDataAdapters).map(([ex, adapter]) => [ex, adapter!.rateLimits]),
+) as Record<ExchangeId, RateLimitRule[]>;
+
+const restClient = new GuardedRestClient({
+  clock,
+  eventSink: consoleEventSink,
+  rateLimitRules: rateLimitRulesByExchange,
+  sourceStatus,
+  envelopeError: (exchange, body) => marketDataAdapters[exchange]?.rest.envelopeError(body) ?? null,
+});
+
+const marketState = new MarketState({
+  clock,
+  eventSink: consoleEventSink,
+  sourceStatus,
+  // watch_stale_threshold_ms 設計上應為「該所 feed 輪詢間隔 × 3」（design.md Decision 5 第 5 點），
+  // 目前 MarketState 只接受單一全域門檻（待定：改為逐所門檻，見本 change 最終報告「待定」清單）；
+  // 暫以最慢的全市場 POLL 間隔（Pionex / Bitget / OKX 30 s）× 3 = 90 s 作為保守值，
+  // 避免輪詢間隔本身就逼近門檻而產生假性 stale/recovered 抖動（task 5.1 實測發現）。
+  thresholds: { shortlist_threshold_ms: 3000, full_market_threshold_ms: 90_000 },
+  max_last_known_good_age_ms: 300_000,
+  freshness_check_interval_ms: 500,
+});
+marketState.start();
+
+const orderBookService = new OrderBookService({
+  clock,
+  eventSink: consoleEventSink,
+  restClient,
+  adapterFor: (exchange) => marketDataAdapters[exchange as ExchangeId]!,
+});
+
+const SCAN_EXCHANGES: ExchangeId[] = ['Pionex', 'Binance', 'Bybit', 'Bitget', 'OKX'];
+// trading_exchanges：目前只有 Binance、Bybit 的 adapter 宣告 shortlist（design.md Decision 2）。
+// server.ts 本身沒有場次（proposal「研究端過渡」），promote/release 只供未來 Paper Runtime 使用。
+const TRADING_EXCHANGES: ExchangeId[] = ['Binance', 'Bybit'];
+
+const marketDataService = new MarketDataService({
+  clock,
+  eventSink: consoleEventSink,
+  registry,
+  restClient,
+  marketState,
+  orderBook: orderBookService,
+  sourceStatus,
+  wsFactory: (url: string) => new WebSocket(url) as unknown as import('./runtime/src/market/types').MinimalWebSocket,
+  adapters: marketDataAdapters,
+  scan_exchanges: SCAN_EXCHANGES,
+  trading_exchanges: TRADING_EXCHANGES,
+  reconnect_backoff: { base_ms: 1000, max_ms: 60_000, jitter_ratio: 0.2 },
+  backoff_reset_after_ms: 60_000,
+});
+
+const SERVER_TIME_CALIBRATION_INTERVAL_MS = 30_000;
+
+async function calibrateClock(): Promise<void> {
+  await Promise.all(
+    SCAN_EXCHANGES.map(async (exchange) => {
+      const adapter = marketDataAdapters[exchange];
+      if (!adapter) return;
+      try {
+        const sentAt = clock.now();
+        const sample = await queryServerTime(restClient, adapter);
+        const receivedAt = clock.now();
+        clock.calibrate(exchange, { sentAt, serverTime: sample.server_time, receivedAt });
+      } catch (err) {
+        console.error(`[market-data] clock calibration failed for ${exchange}:`, err);
+      }
+    }),
+  );
 }
 
-export type ExchangeName = 'Pionex' | 'Binance' | 'Bybit' | 'Bitget' | 'OKX';
+let registrySuccessfulSourceCount = 0;
+let registryHasRefreshedOnce = false;
+
+const INSTRUMENT_REFRESH_INTERVAL_MS = 3_600_000; // 1 小時（design.md Decision 5）
+
+async function refreshBinance(now: number): Promise<void> {
+  try {
+    const [exchangeInfo, fundingInfo, premiumIndex] = await Promise.all([
+      restClient.getJson<any>({ exchange: 'Binance', url: 'https://fapi.binance.com/fapi/v1/exchangeInfo' }),
+      restClient.getJson<any>({ exchange: 'Binance', url: 'https://fapi.binance.com/fapi/v1/fundingInfo' }),
+      restClient.getJson<any>({ exchange: 'Binance', url: 'https://fapi.binance.com/fapi/v1/premiumIndex' }),
+    ]);
+    const items = normalizeBinanceInstruments({
+      exchangeInfo: exchangeInfo.data,
+      fundingInfo: Array.isArray(fundingInfo.data) ? fundingInfo.data : [],
+      premiumIndex: Array.isArray(premiumIndex.data) ? premiumIndex.data : [],
+      now,
+      onUnknown: (field, value, symbol) =>
+        consoleEventSink.emit({
+          event_id: crypto.randomUUID(),
+          event_type: 'INSTRUMENT_UNKNOWN_VALUE',
+          timestamp: now,
+          recorded_at: now,
+          exchange: 'Binance',
+          symbol,
+          trade_id: null,
+          payload: { field, value },
+        }),
+    });
+    registry.applySnapshot('Binance', items, now);
+    registrySuccessfulSourceCount++;
+  } catch (err) {
+    const upstream = err instanceof UpstreamError ? err : null;
+    registry.markSourceFailed('Binance', upstream?.kind ?? 'NETWORK', upstream?.http_status, now);
+  }
+}
+
+async function refreshBybit(now: number): Promise<void> {
+  try {
+    const [instrumentsInfo, tickers] = await Promise.all([
+      restClient.getJson<any>({ exchange: 'Bybit', url: 'https://api.bybit.com/v5/market/instruments-info?category=linear' }),
+      restClient.getJson<any>({ exchange: 'Bybit', url: 'https://api.bybit.com/v5/market/tickers?category=linear' }),
+    ]);
+    if (instrumentsInfo.data?.retCode !== 0) throw new Error(`Bybit API error: ${instrumentsInfo.data?.retMsg}`);
+    const items = normalizeBybitInstruments({
+      instrumentsInfo: instrumentsInfo.data?.result?.list ?? [],
+      tickers: tickers.data?.result?.list ?? [],
+      now,
+      onUnknown: (field, value, symbol) =>
+        consoleEventSink.emit({
+          event_id: crypto.randomUUID(),
+          event_type: 'INSTRUMENT_UNKNOWN_VALUE',
+          timestamp: now,
+          recorded_at: now,
+          exchange: 'Bybit',
+          symbol,
+          trade_id: null,
+          payload: { field, value },
+        }),
+    });
+    registry.applySnapshot('Bybit', items, now);
+    registrySuccessfulSourceCount++;
+  } catch (err) {
+    const upstream = err instanceof UpstreamError ? err : null;
+    registry.markSourceFailed('Bybit', upstream?.kind ?? 'API_ERROR', upstream?.http_status, now);
+  }
+}
+
+async function refreshOkx(now: number): Promise<void> {
+  try {
+    const [instruments, fundingRates] = await Promise.all([
+      restClient.getJson<any>({ exchange: 'OKX', url: 'https://www.okx.com/api/v5/public/instruments?instType=SWAP' }),
+      restClient.getJson<any>({ exchange: 'OKX', url: 'https://www.okx.com/api/v5/public/funding-rate?instId=ANY' }),
+    ]);
+    if (instruments.data?.code !== '0') throw new Error(`OKX API error: ${instruments.data?.msg}`);
+    const items = normalizeOkxInstruments({
+      instruments: instruments.data?.data ?? [],
+      fundingRates: fundingRates.data?.data ?? [],
+      now,
+      onUnknown: (field, value, symbol) =>
+        consoleEventSink.emit({
+          event_id: crypto.randomUUID(),
+          event_type: 'INSTRUMENT_UNKNOWN_VALUE',
+          timestamp: now,
+          recorded_at: now,
+          exchange: 'OKX',
+          symbol,
+          trade_id: null,
+          payload: { field, value },
+        }),
+    });
+    registry.applySnapshot('OKX', items, now);
+    registrySuccessfulSourceCount++;
+  } catch (err) {
+    const upstream = err instanceof UpstreamError ? err : null;
+    registry.markSourceFailed('OKX', upstream?.kind ?? 'API_ERROR', upstream?.http_status, now);
+  }
+}
+
+async function refreshBitget(now: number): Promise<void> {
+  try {
+    const contracts = await restClient.getJson<any>({
+      exchange: 'Bitget',
+      url: 'https://api.bitget.com/api/v2/mix/market/contracts?productType=USDT-FUTURES',
+    });
+    if (contracts.data?.code !== '00000') throw new Error(`Bitget API error: ${contracts.data?.msg}`);
+    // 結算時間不隨本次 metadata 快照提供，由 refreshBitgetFundingSchedule() 以
+    // current-fund-rate 批次端點獨立刷新（design.md Decision 5：5 分鐘節奏）。
+    const items = normalizeBitgetInstruments({
+      contracts: contracts.data?.data ?? [],
+      fundingRateSchedule: [],
+      now,
+      onUnknown: (field, value, symbol) =>
+        consoleEventSink.emit({
+          event_id: crypto.randomUUID(),
+          event_type: 'INSTRUMENT_UNKNOWN_VALUE',
+          timestamp: now,
+          recorded_at: now,
+          exchange: 'Bitget',
+          symbol,
+          trade_id: null,
+          payload: { field, value },
+        }),
+    });
+    registry.applySnapshot('Bitget', items, now);
+    registrySuccessfulSourceCount++;
+  } catch (err) {
+    const upstream = err instanceof UpstreamError ? err : null;
+    registry.markSourceFailed('Bitget', upstream?.kind ?? 'API_ERROR', upstream?.http_status, now);
+  }
+}
+
+async function refreshPionex(now: number): Promise<void> {
+  try {
+    const [symbols, indexes] = await Promise.all([
+      restClient.getJson<any>({ exchange: 'Pionex', url: 'https://api.pionex.com/api/v1/common/symbols?type=PERP' }),
+      restClient.getJson<any>({ exchange: 'Pionex', url: 'https://api.pionex.com/api/v1/market/indexes' }),
+    ]);
+    const items = normalizePionexInstruments({
+      symbols: symbols.data?.data?.symbols ?? [],
+      indexes: indexes.data?.data?.indexes ?? [],
+      now,
+      onUnknown: (field, value, symbol) =>
+        consoleEventSink.emit({
+          event_id: crypto.randomUUID(),
+          event_type: 'INSTRUMENT_UNKNOWN_VALUE',
+          timestamp: now,
+          recorded_at: now,
+          exchange: 'Pionex',
+          symbol,
+          trade_id: null,
+          payload: { field, value },
+        }),
+    });
+    registry.applySnapshot('Pionex', items, now);
+    registrySuccessfulSourceCount++;
+  } catch (err) {
+    const upstream = err instanceof UpstreamError ? err : null;
+    registry.markSourceFailed('Pionex', upstream?.kind ?? 'NETWORK', upstream?.http_status, now);
+  }
+}
+
+async function refreshRegistry(): Promise<void> {
+  const now = Date.now();
+  registrySuccessfulSourceCount = 0;
+  await Promise.all([refreshBinance(now), refreshBybit(now), refreshOkx(now), refreshBitget(now), refreshPionex(now)]);
+  registryHasRefreshedOnce = true;
+  console.log(`[instrument-registry] refresh complete: ${registrySuccessfulSourceCount}/5 sources OK`);
+}
+
+// 過渡期的 Bitget 專屬資金費時程刷新迴圈（design.md Decision 5 舊版）已移除
+// （task 4.2）：`marketDataService` 的 Bitget `currentFundRate` POLL feed（每 5 分鐘，見
+// runtime/src/adapters/bitget/marketData.ts）透過通用的 `fundingService.forwardFundingSchedule`
+// 呼叫 `registry.updateFundingSchedule`，涵蓋全部 5 所，不再是 Bitget 專屬特例。
+
+function registrySourcesSnapshot(): Record<string, InstrumentSourceStatus | undefined> {
+  const exchanges: ExchangeId[] = ['Pionex', 'Binance', 'Bybit', 'Bitget', 'OKX'];
+  const out: Record<string, InstrumentSourceStatus | undefined> = {};
+  for (const ex of exchanges) out[ex] = registry.sourceStatus(ex);
+  return out;
+}
+
+// 記憶化（market-data-stream spec「Research live-scan served from in-memory market
+// state」design.md Decision 8 第 2 點）：聚合結果以 marketState.version() 做快取鍵，
+// 至多每 scan_recompute_min_interval_ms（預設 1,000）重算一次；time_to_settlement_sec
+// 永遠以「取自快取的 next_funding_time」與本次請求的 now 重新計算（不是快取裡的舊值）。
+const SCAN_RECOMPUTE_MIN_INTERVAL_MS = 1_000;
+let liveScanAggCache: { version: number; computedAt: number; candidates: ReturnType<typeof buildLiveScanCandidates> } | null = null;
+
+function computeLiveScanCandidates(now: number): ReturnType<typeof buildLiveScanCandidates> {
+  const version = marketState.version();
+  if (
+    liveScanAggCache &&
+    liveScanAggCache.version === version &&
+    now - liveScanAggCache.computedAt < SCAN_RECOMPUTE_MIN_INTERVAL_MS
+  ) {
+    // 快取命中：仍對每筆候選的 time_to_settlement_sec 以目前 now 重算（spec 明文：每次回應重算）。
+    return liveScanAggCache.candidates.map((c) => ({
+      ...c,
+      time_to_settlement_sec: Math.max(Math.floor((c.next_funding_time - now) / 1000), 0),
+    }));
+  }
+
+  const legData = buildLegDataFromMarketState(registry, marketState);
+  const instrumentsByKey = new Map<string, ReturnType<typeof registry.list>>();
+  for (const instrument of registry.list()) {
+    const list = instrumentsByKey.get(instrument.instrument_key) ?? [];
+    list.push(instrument);
+    instrumentsByKey.set(instrument.instrument_key, list);
+  }
+  const candidates = buildLiveScanCandidates({
+    instrumentsByKey,
+    legData,
+    now,
+    funding_alignment_tolerance_ms: 60_000,
+    price_mismatch_tolerance_pct: 0.02,
+  });
+  liveScanAggCache = { version, computedAt: now, candidates };
+  return candidates;
+}
 
 /**
  * GET /api/market/live-scan
- * Fetches real-time funding rates from all 5 exchanges: Pionex, Binance, Bybit, Bitget, OKX
+ * 只讀記憶體行情狀態（websocket-data-layer task 4.2）：請求路徑上不再發出任何上游請求。
+ * 支援 `?symbol=` 單一合約篩選；回傳新增 `sources`、`data_as_of`。
  */
-app.get('/api/market/live-scan', async (_req, res) => {
+app.get('/api/market/live-scan', async (req, res) => {
   try {
-    const now = Date.now();
-    if (liveScanCache && now - liveScanCache.timestamp < CACHE_TTL_MS) {
-      return res.json({
-        success: true,
-        cached: true,
-        cache_age_ms: now - liveScanCache.timestamp,
-        ...liveScanCache.data,
-      });
+    const now = clock.now();
+
+    // 註冊表尚未完成第一次刷新（design.md Decision 9 第 4 點，沿用既有判斷）
+    if (!registryHasRefreshedOnce) {
+      return res.status(503).json({ success: false, error: 'REGISTRY_NOT_READY' });
+    }
+    // 行情服務尚未完成第一次全市場快照（market-data-snapshot spec 明文）
+    if (!marketDataService.isReady()) {
+      return res.status(503).json({ success: false, error: 'MARKET_DATA_NOT_READY', sources: buildSourcesSnapshot(sourceStatus) });
     }
 
-    const t0 = Date.now();
+    const t0 = clock.now();
+    let candidates = computeLiveScanCandidates(now);
+    const fetchLatencyMs = clock.now() - t0;
 
-    // 1. Binance USD-M Futures Premium Index
-    const bnPromise = fetch('https://fapi.binance.com/fapi/v1/premiumIndex', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => []);
-
-    // 2. Pionex Futures Indexes
-    const pxPromise = fetch('https://api.pionex.com/api/v1/market/indexes', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => ({ data: { indexes: [] } }));
-
-    // 3. Bybit Linear Tickers
-    const bybitPromise = fetch('https://api.bybit.com/v5/market/tickers?category=linear', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => ({ result: { list: [] } }));
-
-    // 4. Bitget USDT-Futures Tickers
-    const bitgetPromise = fetch('https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => ({ data: [] }));
-
-    // 5. OKX SWAP Tickers & Bulk Funding Rates
-    const okxTickersPromise = fetch('https://www.okx.com/api/v5/market/tickers?instType=SWAP', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => ({ data: [] }));
-
-    const okxFundingPromise = fetch('https://www.okx.com/api/v5/public/funding-rate?instId=ANY', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => ({ data: [] }));
-
-    // 6. Binance 24h Tickers for volumes
-    const bn24hPromise = fetch('https://fapi.binance.com/fapi/v1/ticker/24hr', {
-      headers: { 'User-Agent': 'ArbEngine/1.0' },
-      signal: AbortSignal.timeout(6000),
-    }).then(r => r.json()).catch(() => []);
-
-    const [bnData, pxData, bybitData, bitgetData, okxTickersData, okxFundingData, bn24hData] = await Promise.all([
-      bnPromise,
-      pxPromise,
-      bybitPromise,
-      bitgetPromise,
-      okxTickersPromise,
-      okxFundingPromise,
-      bn24hPromise,
-    ]);
-
-    // Index volumes by base
-    const volumeMap = new Map<string, number>();
-    if (Array.isArray(bn24hData)) {
-      for (const item of bn24hData) {
-        if (item.symbol?.endsWith('USDT') && item.quoteVolume) {
-          const base = extractBaseSymbol(item.symbol);
-          volumeMap.set(base, parseFloat(item.quoteVolume));
-        }
-      }
+    const symbolFilter = typeof req.query.symbol === 'string' ? req.query.symbol : undefined;
+    if (symbolFilter) {
+      candidates = candidates.filter((c) => c.symbol === symbolFilter || c.instrument_key === symbolFilter);
     }
-
-    // Process OKX funding rates map from bulk instId=ANY
-    const okxRatesMap = new Map<string, { rate: number; nextFundingTime: number }>();
-    const okxFundingList = okxFundingData?.data || [];
-    if (Array.isArray(okxFundingList)) {
-      for (const item of okxFundingList) {
-        if (item.instId && item.fundingRate) {
-          const rate = parseFloat(item.fundingRate);
-          const nextTime = parseInt(item.fundingTime || item.nextFundingTime || `${now + 8 * 3600 * 1000}`);
-          okxRatesMap.set(item.instId, { rate, nextFundingTime: nextTime });
-        }
-      }
-    }
-
-    const okxRawList = okxTickersData?.data || [];
-    const okxUsdtSwaps = okxRawList.filter((t: any) => t.instId && t.instId.endsWith('-USDT-SWAP'));
-
-    const fetchLatencyMs = Date.now() - t0;
-
-    interface SymbolAggregate {
-      base: string;
-      displaySymbol: string;
-      rates: Partial<Record<ExchangeName, number>>;
-      marks: Partial<Record<ExchangeName, number>>;
-      nextFundingTimes: Partial<Record<ExchangeName, number>>;
-      rawSymbols: Partial<Record<ExchangeName, string>>;
-      intervals: Partial<Record<ExchangeName, number>>;
-      volume24h: number;
-    }
-
-    const symbolMap = new Map<string, SymbolAggregate>();
-
-    function getOrCreate(base: string, displaySymbol: string): SymbolAggregate {
-      if (!symbolMap.has(base)) {
-        symbolMap.set(base, {
-          base,
-          displaySymbol: displaySymbol.endsWith('USDT') ? displaySymbol : `${displaySymbol}USDT`,
-          rates: {},
-          marks: {},
-          nextFundingTimes: {},
-          rawSymbols: {},
-          intervals: {},
-          volume24h: volumeMap.get(base) || 10000000,
-        });
-      }
-      return symbolMap.get(base)!;
-    }
-
-    // Process Binance
-    if (Array.isArray(bnData)) {
-      for (const item of bnData) {
-        if (!item.symbol?.endsWith('USDT')) continue;
-        const base = extractBaseSymbol(item.symbol);
-        const agg = getOrCreate(base, item.symbol);
-        agg.rates['Binance'] = parseFloat(item.lastFundingRate || '0');
-        agg.marks['Binance'] = parseFloat(item.markPrice || '0');
-        agg.nextFundingTimes['Binance'] = item.nextFundingTime || (now + 8 * 3600 * 1000);
-        agg.rawSymbols['Binance'] = item.symbol;
-        agg.intervals['Binance'] = 8;
-      }
-    }
-
-    // Process Pionex
-    const pxIndexes = pxData?.data?.indexes || [];
-    if (Array.isArray(pxIndexes)) {
-      for (const item of pxIndexes) {
-        if (!item.symbol?.endsWith('_PERP')) continue;
-        const base = extractBaseSymbol(item.symbol);
-        const agg = getOrCreate(base, item.symbol.replace('_PERP', '').replace('_', ''));
-        agg.rates['Pionex'] = parseFloat(item.nextFundingRate || '0');
-        agg.marks['Pionex'] = parseFloat(item.markPrice || '0');
-        agg.nextFundingTimes['Pionex'] = item.nextFundingTime || (now + 8 * 3600 * 1000);
-        agg.rawSymbols['Pionex'] = item.symbol;
-        const diffHrs = ((item.nextFundingTime || (now + 8 * 3600 * 1000)) - now) / 3600000;
-        agg.intervals['Pionex'] = diffHrs <= 1.2 ? 1 : diffHrs <= 4.2 ? 4 : 8;
-      }
-    }
-
-    // Process Bybit
-    const bybitList = bybitData?.result?.list || [];
-    if (Array.isArray(bybitList)) {
-      for (const item of bybitList) {
-        if (!item.symbol?.endsWith('USDT')) continue;
-        const base = extractBaseSymbol(item.symbol);
-        const agg = getOrCreate(base, item.symbol);
-        agg.rates['Bybit'] = parseFloat(item.fundingRate || '0');
-        agg.marks['Bybit'] = parseFloat(item.markPrice || '0');
-        agg.nextFundingTimes['Bybit'] = parseInt(item.nextFundingTime || `${now + 8 * 3600 * 1000}`);
-        agg.rawSymbols['Bybit'] = item.symbol;
-        agg.intervals['Bybit'] = parseInt(item.fundingIntervalHour || '8') || 8;
-      }
-    }
-
-    // Process Bitget
-    const bitgetList = bitgetData?.data || [];
-    if (Array.isArray(bitgetList)) {
-      for (const item of bitgetList) {
-        if (!item.symbol?.endsWith('USDT')) continue;
-        const base = extractBaseSymbol(item.symbol);
-        const agg = getOrCreate(base, item.symbol);
-        agg.rates['Bitget'] = parseFloat(item.fundingRate || '0');
-        agg.marks['Bitget'] = parseFloat(item.markPrice || '0');
-        agg.rawSymbols['Bitget'] = item.symbol;
-        agg.intervals['Bitget'] = 8;
-      }
-    }
-
-    // Process OKX
-    for (const t of okxUsdtSwaps) {
-      const base = extractBaseSymbol(t.instId);
-      const agg = getOrCreate(base, `${base}USDT`);
-      const okxInfo = okxRatesMap.get(t.instId);
-      if (okxInfo) {
-        agg.rates['OKX'] = okxInfo.rate;
-        agg.nextFundingTimes['OKX'] = okxInfo.nextFundingTime;
-      }
-      agg.marks['OKX'] = parseFloat(t.last || '0');
-      agg.rawSymbols['OKX'] = t.instId;
-      agg.intervals['OKX'] = 8;
-    }
-
-    // Form arbitrage opportunities across all 5 exchanges
-    const matchedCandidates: any[] = [];
-    const EXCHANGES: ExchangeName[] = ['Pionex', 'Binance', 'Bybit', 'Bitget', 'OKX'];
-
-    for (const agg of symbolMap.values()) {
-      const activeExchanges = EXCHANGES.filter(ex => agg.rates[ex] !== undefined);
-      if (activeExchanges.length < 2) continue;
-
-      let maxSpread = 0;
-      let bestLongEx: ExchangeName = activeExchanges[0];
-      let bestShortEx: ExchangeName = activeExchanges[1];
-
-      const pairSpreads: Record<string, number> = {};
-
-      for (let i = 0; i < activeExchanges.length; i++) {
-        for (let j = i + 1; j < activeExchanges.length; j++) {
-          const exA = activeExchanges[i];
-          const exB = activeExchanges[j];
-          const rateA = agg.rates[exA]!;
-          const rateB = agg.rates[exB]!;
-          const spread = Math.abs(rateA - rateB);
-
-          pairSpreads[`${exA}_${exB}`] = spread;
-
-          if (spread > maxSpread) {
-            maxSpread = spread;
-            if (rateA < rateB) {
-              bestLongEx = exA;
-              bestShortEx = exB;
-            } else {
-              bestLongEx = exB;
-              bestShortEx = exA;
-            }
-          }
-        }
-      }
-
-      const validTimes = Object.values(agg.nextFundingTimes).filter((t): t is number => typeof t === 'number' && t > now);
-      const nextFundingTime = validTimes.length > 0 ? Math.min(...validTimes) : now + 8 * 3600 * 1000;
-      const timeToSettlementSec = Math.max(Math.floor((nextFundingTime - now) / 1000), 0);
-
-      const intervals = Object.values(agg.intervals).filter((v): v is number => typeof v === 'number');
-      const intervalHours = intervals.length > 0 ? Math.min(...intervals) : 8;
-
-      const volume24h = agg.volume24h;
-      const estSlippagePct = volume24h > 100000000 ? 0.00015 : volume24h > 20000000 ? 0.0003 : 0.0005;
-      const totalSlippagePct = estSlippagePct * 4;
-      const fixedFeeDragPct = 0.0020; // 0.20%
-      const expectedNetPnlPct = maxSpread - fixedFeeDragPct - totalSlippagePct;
-
-      matchedCandidates.push({
-        symbol: agg.displaySymbol,
-        base: agg.base,
-        available_exchanges: activeExchanges,
-        // Individual rates for all 5 exchanges
-        pionex_rate: agg.rates['Pionex'] ?? null,
-        binance_rate: agg.rates['Binance'] ?? null,
-        bybit_rate: agg.rates['Bybit'] ?? null,
-        bitget_rate: agg.rates['Bitget'] ?? null,
-        okx_rate: agg.rates['OKX'] ?? null,
-        // Raw marks
-        pionex_mark: agg.marks['Pionex'] ?? null,
-        binance_mark: agg.marks['Binance'] ?? null,
-        bybit_mark: agg.marks['Bybit'] ?? null,
-        bitget_mark: agg.marks['Bitget'] ?? null,
-        okx_mark: agg.marks['OKX'] ?? null,
-        // Best opportunity
-        spread: maxSpread,
-        best_pair: {
-          long_exchange: bestLongEx,
-          short_exchange: bestShortEx,
-          pair_label: `Long ${bestLongEx} / Short ${bestShortEx}`,
-          spread: maxSpread,
-        },
-        pair_spreads: pairSpreads,
-        next_funding_time: nextFundingTime,
-        time_to_settlement_sec: timeToSettlementSec,
-        interval_hours: intervalHours,
-        volume_24h: volume24h,
-        est_slippage_pct: totalSlippagePct,
-        fee_drag_pct: fixedFeeDragPct,
-        expected_net_pnl_pct: expectedNetPnlPct,
-        expected_net_pnl_usdt: 1000 * expectedNetPnlPct,
-        meets_threshold: maxSpread >= 0.0020,
-      });
-    }
-
-    matchedCandidates.sort((a, b) => b.spread - a.spread);
-    matchedCandidates.forEach((c, idx) => {
-      c.rank = idx + 1;
-    });
 
     const payload = {
       server_time: now,
       fetch_latency_ms: fetchLatencyMs,
-      total_matched_pairs: matchedCandidates.length,
-      threshold_qualified_count: matchedCandidates.filter(c => c.meets_threshold).length,
+      total_matched_pairs: candidates.length,
+      threshold_qualified_count: candidates.filter(c => c.meets_threshold).length,
       exchange_counts: {
-        Pionex: matchedCandidates.filter(c => c.pionex_rate !== null).length,
-        Binance: matchedCandidates.filter(c => c.binance_rate !== null).length,
-        Bybit: matchedCandidates.filter(c => c.bybit_rate !== null).length,
-        Bitget: matchedCandidates.filter(c => c.bitget_rate !== null).length,
-        OKX: matchedCandidates.filter(c => c.okx_rate !== null).length,
+        Pionex: candidates.filter(c => c.pionex_rate !== null).length,
+        Binance: candidates.filter(c => c.binance_rate !== null).length,
+        Bybit: candidates.filter(c => c.bybit_rate !== null).length,
+        Bitget: candidates.filter(c => c.bitget_rate !== null).length,
+        OKX: candidates.filter(c => c.okx_rate !== null).length,
       },
-      candidates: matchedCandidates,
+      candidates,
+      registry_sources: registrySourcesSnapshot(),
+      sources: buildSourcesSnapshot(sourceStatus),
+      data_as_of: buildDataAsOf(sourceStatus),
     };
-
-    liveScanCache = { timestamp: now, data: payload };
 
     return res.json({
       success: true,
       cached: false,
+      cache_age_ms: now - (liveScanAggCache?.computedAt ?? now),
       ...payload,
     });
   } catch (err: any) {
-    console.error('Error fetching 5-exchange live market data:', err);
+    console.error('Error serving 5-exchange live market data:', err);
     return res.status(500).json({
       success: false,
-      error: err.message || 'Failed to fetch 5-exchange market data',
+      error: err.message || 'Failed to serve 5-exchange market data',
     });
   }
 });
@@ -424,19 +480,66 @@ app.get('/api/latency/ping', async (_req, res) => {
  */
 app.get('/api/market/live-klines', async (req, res) => {
   try {
-    const symbol = (req.query.symbol as string || 'BTCUSDT').toUpperCase();
-    const pxSymbol = symbol.endsWith('USDT')
-      ? `${symbol.replace('USDT', '')}_USDT_PERP`
-      : `${symbol}_PERP`;
+    const rawSymbol = (req.query.symbol as string) || 'BTCUSDT';
+    const resolution = resolveKlinesSymbol(rawSymbol, registry);
+    if (!resolution.ok) {
+      return res.status(400).json({ success: false, error: resolution.reason });
+    }
+    const { binance_native_symbol: symbol, pionex_native_symbol: pxSymbol } = resolution.resolution;
 
-    const [bnRes, pxRes] = await Promise.all([
-      fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=1m&limit=10`, {
-        signal: AbortSignal.timeout(5000),
-      }).then(r => r.json()).catch(() => []),
-      fetch(`https://api.pionex.com/api/v1/market/klines?symbol=${pxSymbol}&interval=1M&limit=10`, {
-        signal: AbortSignal.timeout(5000),
-      }).then(r => r.json()).catch(() => ({ data: { klines: [] } })),
-    ]);
+    const binanceUrl = new URL('https://fapi.binance.com/fapi/v1/klines');
+    binanceUrl.searchParams.set('symbol', symbol);
+    binanceUrl.searchParams.set('interval', '1m');
+    binanceUrl.searchParams.set('limit', '10');
+
+    const errors: Record<string, string> = {};
+
+    const bnRes = await fetch(binanceUrl.toString(), { signal: AbortSignal.timeout(5000) })
+      .then(async (r) => {
+        if (!r.ok) {
+          errors.binance = `HTTP ${r.status}`;
+          return [];
+        }
+        return r.json();
+      })
+      .catch((err) => {
+        errors.binance = err.message;
+        return [];
+      });
+
+    let pionexBars: Array<{ time: number; open: number; high: number; low: number; close: number; volume: number }> = [];
+    if (pxSymbol) {
+      const pionexUrl = new URL('https://api.pionex.com/api/v1/market/klines');
+      pionexUrl.searchParams.set('symbol', pxSymbol);
+      pionexUrl.searchParams.set('interval', '1M');
+      pionexUrl.searchParams.set('limit', '10');
+
+      const pxRes = await fetch(pionexUrl.toString(), { signal: AbortSignal.timeout(5000) })
+        .then(async (r) => {
+          if (!r.ok) {
+            errors.pionex = `HTTP ${r.status}`;
+            return { data: { klines: [] } };
+          }
+          return r.json();
+        })
+        .catch((err) => {
+          errors.pionex = err.message;
+          return { data: { klines: [] } };
+        });
+
+      pionexBars = pxRes?.data?.klines
+        ? pxRes.data.klines.slice(0, 5).reverse().map((bar: any) => ({
+            time: bar.time,
+            open: parseFloat(bar.open),
+            high: parseFloat(bar.high),
+            low: parseFloat(bar.low),
+            close: parseFloat(bar.close),
+            volume: parseFloat(bar.volume),
+          }))
+        : [];
+    } else {
+      errors.pionex = 'NOT_FOUND';
+    }
 
     const binanceBars = Array.isArray(bnRes)
       ? bnRes.slice(-5).map((bar: any) => ({
@@ -449,23 +552,13 @@ app.get('/api/market/live-klines', async (req, res) => {
         }))
       : [];
 
-    const pionexBars = pxRes?.data?.klines
-      ? pxRes.data.klines.slice(0, 5).reverse().map((bar: any) => ({
-          time: bar.time,
-          open: parseFloat(bar.open),
-          high: parseFloat(bar.high),
-          low: parseFloat(bar.low),
-          close: parseFloat(bar.close),
-          volume: parseFloat(bar.volume),
-        }))
-      : [];
-
     return res.json({
       success: true,
       symbol,
       pionex_symbol: pxSymbol,
       binance_bars: binanceBars,
       pionex_bars: pionexBars,
+      ...(Object.keys(errors).length > 0 ? { errors } : {}),
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -473,6 +566,20 @@ app.get('/api/market/live-klines', async (req, res) => {
 });
 
 async function start() {
+  // 非阻塞啟動刷新（design.md Decision 9 第 2 點）：app.listen 不等待註冊表就緒。
+  refreshRegistry().catch(err => console.error('[instrument-registry] initial refresh failed:', err));
+  setInterval(() => {
+    refreshRegistry().catch(err => console.error('[instrument-registry] periodic refresh failed:', err));
+  }, INSTRUMENT_REFRESH_INTERVAL_MS);
+
+  // websocket-data-layer（task 4.2）：行情服務獨立於註冊表 metadata 刷新啟動；
+  // RealClock 先做一次校正樣本，再啟動全市場層輪詢 / 串流，之後每 30 s 重新校正。
+  await calibrateClock().catch(err => console.error('[market-data] initial clock calibration failed:', err));
+  marketDataService.start();
+  setInterval(() => {
+    calibrateClock().catch(err => console.error('[market-data] periodic clock calibration failed:', err));
+  }, SERVER_TIME_CALIBRATION_INTERVAL_MS);
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

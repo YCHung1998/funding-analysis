@@ -14,16 +14,35 @@ import {
   TradeLegResult,
   ExecutionExperimentConfig,
 } from '../types/schema';
+import { feeRate } from '../../runtime/src/accounting/feeEngine';
 
+// Q-06 fix: default taker fees come from the shared Fee Engine's default table, not a
+// hardcoded literal (net-cost-model spec "策略與掃描層不得寫死手續費").
 export const DEFAULT_CONFIG: ExecutionExperimentConfig = {
   notional_usdt: 1000,
   entry_offset_sec: -30,
   exit_offset_sec: 30,
   fee_tier: 'lowest_vip0',
-  pionex_taker_fee: 0.0005, // 0.05%
-  binance_taker_fee: 0.0005, // 0.05%
-  research_threshold_spread: 0.0020, // 0.20%
+  pionex_taker_fee: feeRate('Pionex', 'TAKER'),
+  binance_taker_fee: feeRate('Binance', 'TAKER'),
+  research_threshold_spread: 0.0020, // 0.20% (gross spread display-only threshold; kept for UI compat)
 };
+
+/**
+ * Q-06 fix: maps "long-end / short-end" fee rates (as the ExecutionSimulator UI exposes them) to
+ * the Pionex / Binance exchange legs by their actual side, instead of the previous bug where
+ * `longFee` was always assigned to `pionex_taker_fee` regardless of which leg was actually long
+ * (design.md Decision 9 "ExecutionSimulator.tsx: 手續費依腿別交易所對應（修 longFee →
+ * pionex_taker_fee 的錯置）").
+ */
+export function resolveLegFeeRates(input: { pionexIsShort: boolean; longFeeRate: number; shortFeeRate: number }): {
+  pionexFeeRate: number;
+  binanceFeeRate: number;
+} {
+  return input.pionexIsShort
+    ? { pionexFeeRate: input.shortFeeRate, binanceFeeRate: input.longFeeRate }
+    : { pionexFeeRate: input.longFeeRate, binanceFeeRate: input.shortFeeRate };
+}
 
 /**
  * Derives analytical metrics from a 1m Kline bar
@@ -196,8 +215,10 @@ export function simulateExecutionExperiment(
   // Gross PnL = Price PnL + Funding PnL
   const grossPnL = totalPricePnL + totalFundingPnL;
 
-  // Realized Net PnL = Gross PnL - Fees - Slippage
-  const netPnL = grossPnL - totalFee - totalSlippage;
+  // Realized Net PnL = Gross PnL - Fees (✅ C-13 / Q-05 fix: entry/exit prices above already
+  // embed slippage, so `total_slippage` below is attribution-only and MUST NOT be subtracted
+  // again here — see runtime/src/accounting/pnlFormula.ts composeNetPnl).
+  const netPnL = grossPnL - totalFee;
   const roiPct = (netPnL / (2 * notional)) * 100;
 
   const pionexLeg: TradeLegResult = {
@@ -214,7 +235,8 @@ export function simulateExecutionExperiment(
     entry_slippage: pionexEntrySlip,
     exit_slippage: pionexExitSlip,
     total_cost: pionexEntryFee + pionexExitFee + pionexEntrySlip + pionexExitSlip,
-    net_pnl: pionexPricePnL + pionexFundingPnL - (pionexEntryFee + pionexExitFee + pionexEntrySlip + pionexExitSlip),
+    // Q-05 fix: price_pnl already embeds slippage (entry/exit prices above); only fees subtract here.
+    net_pnl: pionexPricePnL + pionexFundingPnL - (pionexEntryFee + pionexExitFee),
   };
 
   const binanceLeg: TradeLegResult = {
@@ -231,7 +253,8 @@ export function simulateExecutionExperiment(
     entry_slippage: binanceEntrySlip,
     exit_slippage: binanceExitSlip,
     total_cost: binanceEntryFee + binanceExitFee + binanceEntrySlip + binanceExitSlip,
-    net_pnl: binancePricePnL + binanceFundingPnL - (binanceEntryFee + binanceExitFee + binanceEntrySlip + binanceExitSlip),
+    // Q-05 fix: price_pnl already embeds slippage (entry/exit prices above); only fees subtract here.
+    net_pnl: binancePricePnL + binanceFundingPnL - (binanceEntryFee + binanceExitFee),
   };
 
   const maxRangePct = Math.max(

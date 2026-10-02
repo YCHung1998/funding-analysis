@@ -42,6 +42,26 @@ export interface LiveMarketCandidate {
   expected_net_pnl_pct: number;
   expected_net_pnl_usdt: number;
   meets_threshold: boolean;
+  // instrument-registry 新增欄位（向下相容，選用）
+  instrument_key?: string;
+  long_funding_time?: number;
+  short_funding_time?: number;
+  long_funding_interval_hours?: number | null;
+  short_funding_interval_hours?: number | null;
+  funding_aligned?: boolean;
+  long_volume_24h?: number;
+  short_volume_24h?: number;
+  // net-cost-model 新增欄位（向下相容，選用）：best_pair / 排序 / meets_threshold 已改為淨值口徑
+  // （`spread` 保留為毛 spread，`expected_net_pnl_pct`/`expected_net_pnl_usdt` 等 @deprecated
+  // 欄位語意不變但數值已是淨值）。
+  net_spread_pct?: number;
+  pair_net_spreads?: Record<string, number>;
+  entry_basis_pct?: number;
+  slippage_model?: { long: string; short: string };
+  fee_config_version?: string;
+  // [Integrator review fix] single-leg notional that est_slippage_pct / fee_drag_pct /
+  // expected_net_pnl_pct are all consistently denominated by (spec §5 mapping).
+  target_notional_per_leg_usdt?: number;
 }
 
 export interface LiveScanResponse {
@@ -59,6 +79,22 @@ export interface LiveScanResponse {
     OKX: number;
   };
   candidates: LiveMarketCandidate[];
+  // instrument-registry 新增欄位：每所註冊表來源狀態（選用）
+  registry_sources?: Record<string, { status: 'OK' | 'FAILED'; error_kind?: string; http_status?: number }>;
+  // websocket-data-layer 新增欄位（選用，向下相容）：每所行情來源狀態與最近成功更新時間
+  // （market-data-snapshot spec「Research live-scan served from in-memory market state」）。
+  sources?: Record<
+    ExchangeName,
+    {
+      state: 'INITIALIZING' | 'HEALTHY' | 'DEGRADED' | 'FAILED' | 'RATE_LIMITED';
+      last_success_at: number | null;
+      data_age_ms: number | null;
+      instrument_count: number;
+      consecutive_failures: number;
+    } | undefined
+  >;
+  data_as_of?: Record<ExchangeName, number | null>;
+  cache_age_ms?: number;
 }
 
 export async function fetchLiveMarketScan(): Promise<LiveScanResponse> {

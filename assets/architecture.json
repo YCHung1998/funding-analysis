@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Funding Rate Arbitrage Lab — 系統架構",
+    "output": "architecture.html",
+    "quality_profile": "showcase",
+    "repository": { "url": "https://github.com/YCHung1998/funding-analysis", "revision": "95535cacdae9b8a8582fde94c67b48f3d2ca805b" },
+    "views": [
+      { "id": "live-path", "label": "即時資料主路徑", "focus": ["exchanges", "server", "cache", "svc", "ui"], "note": "交易所公開 API → server.ts 聚合配對 → 前端分頁。這是唯一使用真實行情的路徑。" },
+      { "id": "simulation", "label": "模擬與 mock", "focus": ["ui", "dryrun", "funnel", "arb", "mock"], "note": "Dry-run、Execution Flow、三級漏斗示範都在瀏覽器內計算，輸入多為 mock 或常數。" },
+      { "id": "schema-secrets", "label": "Schema 與機密", "focus": ["ui", "adapters", "secrets"], "note": "adapters 只供 Schema 頁展示，server 沒有使用；Secret Vault 明文存 localStorage。" }
+    ]
+  },
+  "components": [
+    { "id": "exchanges", "type": "external", "label": "5 交易所公開 API", "sublabel": "PX · BN · Bybit · Bitget · OKX", "pos": [40, 300], "size": [170, 64], "sources": [{ "path": "server.ts", "line": 68, "end_line": 117 }] },
+    { "id": "server", "type": "backend", "label": "server.ts", "sublabel": "Express :3000", "tag": "live-scan · ping · klines", "pos": [290, 300], "size": [150, 64], "sources": [{ "path": "server.ts", "line": 54, "end_line": 371 }] },
+    { "id": "cache", "type": "database", "label": "記憶體快取", "sublabel": "live-scan 5s TTL", "pos": [290, 130], "size": [150, 60], "sources": [{ "path": "server.ts", "line": 22, "end_line": 23 }] },
+    { "id": "svc", "type": "frontend", "label": "liveMarketService", "sublabel": "fetch /api/*", "pos": [520, 300], "size": [160, 64], "sources": [{ "path": "src/services/liveMarketService.ts" }] },
+    { "id": "ui", "type": "frontend", "label": "App.tsx 分頁", "sublabel": "M1–M7 · 9 tabs", "pos": [760, 300], "size": [150, 64], "sources": [{ "path": "src/App.tsx" }, { "path": "src/components/Header.tsx", "line": 46, "end_line": 54 }] },
+    { "id": "dryrun", "type": "backend", "label": "dryRunEngine", "sublabel": "時間軸 · 9 項風控", "tag": "數值多為常數", "pos": [990, 300], "size": [160, 64], "sources": [{ "path": "src/engine/dryRunEngine.ts" }] },
+    { "id": "adapters", "type": "backend", "label": "adapters/*", "sublabel": "→ CommonFundingRecord", "tag": "僅 Schema 頁使用", "pos": [760, 130], "size": [150, 60], "sources": [{ "path": "src/adapters/binanceAdapter.ts", "label": "adapter 範例" }, { "path": "src/types/schema.ts" }] },
+    { "id": "secrets", "type": "security", "label": "Secret Vault", "sublabel": "localStorage", "tag": "明文", "pos": [990, 130], "size": [160, 60], "sources": [{ "path": "src/components/LocalSecretsView.tsx", "line": 71 }] },
+    { "id": "mock", "type": "database", "label": "mockMarketData", "sublabel": "假結算事件", "pos": [520, 480], "size": [160, 60], "sources": [{ "path": "src/data/mockMarketData.ts" }] },
+    { "id": "arb", "type": "backend", "label": "arbitrageEngine", "sublabel": "60s 實驗 · 滑價模型", "pos": [760, 480], "size": [150, 60], "sources": [{ "path": "src/engine/arbitrageEngine.ts" }] },
+    { "id": "funnel", "type": "backend", "label": "funnelScanner", "sublabel": "15 個寫死幣種", "pos": [990, 480], "size": [160, 60], "sources": [{ "path": "src/engine/funnelScanner.ts" }] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Node 伺服器（npm run dev）", "wraps": ["server", "cache"] },
+    { "kind": "region", "label": "瀏覽器（React + Vite）", "wraps": ["svc", "ui", "dryrun", "adapters", "secrets", "mock", "arb", "funnel"] }
+  ],
+  "connections": [
+    { "id": "fetch-public", "from": "exchanges", "to": "server", "label": "REST GET", "variant": "emphasis" },
+    { "id": "server-cache", "from": "server", "to": "cache", "label": "5s 快取" },
+    { "id": "server-json", "from": "server", "to": "svc", "label": "JSON", "variant": "emphasis" },
+    { "id": "svc-ui", "from": "svc", "to": "ui", "label": "候選清單", "variant": "emphasis" },
+    { "id": "ui-dryrun", "from": "ui", "to": "dryrun", "label": "Dry-Run 分頁" },
+    { "id": "ui-adapters", "from": "ui", "to": "adapters", "label": "Schema 分頁", "variant": "dashed", "labelDx": -34 },
+    { "id": "ui-secrets", "from": "ui", "to": "secrets", "label": "存 key", "variant": "security", "fromSide": "top", "toSide": "left" },
+    { "id": "ui-arb", "from": "ui", "to": "arb", "label": "Execution 分頁", "labelDy": 24 },
+    { "id": "mock-arb", "from": "mock", "to": "arb", "label": "mock 輸入", "variant": "dashed" },
+    { "id": "funnel-dryrun", "from": "funnel", "to": "dryrun", "label": "Top 3", "variant": "dashed" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "即時（真資料）", "items": ["server.ts 平行抓 5 所費率、兩兩配對取最大 spread", "M3 Live 區與 Dry-run 候選使用此路徑"] },
+    { "dot": "amber", "title": "模擬（mock / 常數）", "items": ["arbitrageEngine 吃 mockMarketData", "funnelScanner 為 15 個寫死幣", "dryRunEngine 延遲、漂移、保證金寫死"] },
+    { "dot": "rose", "title": "已知缺口", "items": ["server 未走 adapters（P10）", "週期未正規化、量缺值填 10M（P1 P3）", "Secret Vault 明文（P12）"] }
+  ]
+}

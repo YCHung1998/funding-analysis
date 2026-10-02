@@ -154,8 +154,26 @@ const HELP_DICTIONARY: Record<ActiveTab, PageHelpContent> = {
     ],
     apiKeyNote: '公開市場掃描不需任何 API Key；只有實盤下單、保證金檢查與帳戶倉位監控需要私有 Key。',
   },
+  paper: {
+    title: 'Paper Trading (觀察 Paper Trading Runtime)',
+    moduleTag: 'PAPER TRADING RUNTIME · OBSERVER / CONTROLLER',
+    purpose:
+      '呈現 Paper Trading Runtime（獨立 Node process，SQLite 唯一寫入者）的真實帳戶、交易（含失敗 / 未成交 / 撤單 / 緊急平倉）與 Runtime 健康狀態。UI 不決定交易狀態：所有狀態、金額、Hedge Ratio、PnL 皆直接取自 Runtime 的唯讀 API 快照，UI 只做格式化與重新查詢的觸發，不自行推導或覆寫。',
+    howToUse: [
+      '上方 Account 區顯示 Total / Available / Allocated Capital 與 Current / Max Positions。',
+      'Current Trades 列出所有未達終態的交易；Completed Trades 可依結果（含 ABORTED / FAILED / EMERGENCY_EXIT）篩選，並以伺服器端分頁載入。',
+      '點擊任一列開啟 Trade Detail，檢視 Strategy / Position / Entry / Funding / Exit / Result 六大區塊與完整事件 Timeline。',
+      'Runtime Health 面板顯示 Engine、各交易所連線、Database 等狀態；心跳過期或 API 無法連線時會明確標示，不會假裝顯示 RUNNING。',
+      'Kill Switch 控制區目前僅為預留版位（⚠️ 待決 C-16），按鈕停用且不會送出任何網路請求。',
+    ],
+    keyTerms: [
+      { term: 'Observer / Controller', explanation: 'UI 只觀察 Runtime 狀態並視需要轉發控制指令，交易流程完全不依賴前端是否開啟。' },
+      { term: 'Net = Funding + Price − Fees', explanation: 'Slippage 已包含在 Price PnL 中，顯示時以歸因樣式呈現，不另外從 Net 中扣除。' },
+      { term: 'MOCK 資料源', explanation: '當 VITE_PAPER_DATA_SOURCE=mock 時，畫面頂端與各區塊標題會明確標示 MOCK，絕不會在 live 模式下靜默退回 mock 資料。' },
+    ],
+  },
   spec: {
-    title: 'System Spec v0.2 (規格庫與未來備忘錄)',
+    title: 'System Spec v0.1 (規格庫與未來備忘錄)',
     moduleTag: 'SPECIFICATION KNOWLEDGE BASE',
     purpose: '永久固化 7 大模組規格定義、公式手冊，並提供本機持久化的未來版本備忘錄（逐步記憶擴充庫）。',
     howToUse: [
@@ -284,7 +302,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose, activeTab
         {/* Footer */}
         <div className="p-4 border-t border-slate-800 bg-slate-950/80 flex items-center justify-between text-xs font-mono">
           <span className="text-slate-500 text-[11px]">
-            Pionex × Binance Funding Arbitrage Specification v0.2
+            Pionex × Binance Funding Arbitrage Specification v0.1
           </span>
           <button
             onClick={onClose}
