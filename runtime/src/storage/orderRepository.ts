@@ -478,6 +478,10 @@ export interface OrderRepository {
   getPosition(id: string): PaperPosition | undefined;
   saveFundingSettlement(fs: FundingSettlement): void;
   listFundingSettlementsForLeg(legId: string): FundingSettlement[];
+  /** Added for `runtime-health-reconciliation` task 2.3 — `reconciler.ts`'s per-trade snapshot build. */
+  listOrdersForTrade(tradeId: string): PaperOrder[];
+  /** Added for `runtime-health-reconciliation` task 2.3 — `reconciler.ts`'s per-trade snapshot build. */
+  listPositionsForTrade(tradeId: string): PaperPosition[];
 }
 
 /** No method here deletes rows (spec: orders/fills must never be deleted). */
@@ -489,6 +493,7 @@ export function createOrderRepository(db: SqliteDriver): OrderRepository {
        .join(', ')}`,
   );
   const selectOrder = db.prepare(`SELECT * FROM orders WHERE order_id = ?`);
+  const selectOrdersForTrade = db.prepare(`SELECT * FROM orders WHERE trade_id = ? ORDER BY order_id`);
 
   const upsertFill = db.prepare(
     `INSERT INTO fills (${FILL_COLUMNS.join(', ')}) VALUES (${placeholders(FILL_COLUMNS.length)})
@@ -505,6 +510,7 @@ export function createOrderRepository(db: SqliteDriver): OrderRepository {
        .join(', ')}`,
   );
   const selectPosition = db.prepare(`SELECT * FROM positions WHERE position_id = ?`);
+  const selectPositionsForTrade = db.prepare(`SELECT * FROM positions WHERE trade_id = ? ORDER BY position_id`);
 
   const upsertFundingSettlement = db.prepare(
     `INSERT INTO funding_settlements (${FUNDING_SETTLEMENT_COLUMNS.join(', ')}) VALUES (${placeholders(FUNDING_SETTLEMENT_COLUMNS.length)})
@@ -542,6 +548,14 @@ export function createOrderRepository(db: SqliteDriver): OrderRepository {
     listFundingSettlementsForLeg(legId) {
       const rows = selectFundingSettlementsForLeg.all(legId) as FundingSettlementRow[];
       return rows.map(rowToFundingSettlement);
+    },
+    listOrdersForTrade(tradeId) {
+      const rows = selectOrdersForTrade.all(tradeId) as OrderRow[];
+      return rows.map(rowToOrder);
+    },
+    listPositionsForTrade(tradeId) {
+      const rows = selectPositionsForTrade.all(tradeId) as PositionRow[];
+      return rows.map(rowToPosition);
     },
   };
 }
