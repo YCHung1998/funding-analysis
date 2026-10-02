@@ -3,7 +3,7 @@
 
 ## 1. 儲存
 
-- [ ] 1.1 `002_runtime_health`（`runtime_health`、`reconciliation_runs`，可逆）＋ round-trip 測試
+- [x] 1.1 `003_runtime_health`（`runtime_health`、`reconciliation_runs`，可逆）＋ round-trip 測試 — 檔名/version 由 `002` 改為 `003`（`002_position_accounting_fields` 已佔用；`migrate.ts` 純以 `Migration.version` 排序，與檔名無關，見 design.md Implementation Notes）。證據：`runtime/src/storage/migrations/003_runtime_health.ts`、`runtime/src/storage/migrations/003_runtime_health.test.ts`（6 tests：建表、`runtime_health` 單列 upsert、單列 CHECK 約束拒絕第二個 id、`reconciliation_runs` 多列、up→down→up round trip 與 001/002 不受影響、完整 rollback 清空）。
 
 ## 2. 對帳
 

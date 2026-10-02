@@ -104,6 +104,13 @@ server.ts                                        GET /api/paper/health、/api/ru
 - `002_runtime_health` 可逆；`server.ts` 只新增 GET 路由。在 `feature-runtime-health-reconciliation` 開發，`--no-ff` merge 回 `develop`；rollback = `git revert -m 1 <merge-commit>`，資料層執行 `rollback(db, 1)` 或還原 `data/backup/`。
 - develop → main 前依技術書 §51.2 實際啟動 `npm run dev` 並打 `/api/market/live-scan` 與 `/api/runtime/health`。
 
+## Implementation Notes (Task Group 1-3)
+
+- **1.1 migration 檔名**：Decision 6「檔案」清單寫的是 `runtime/src/storage/migrations/002_runtime_health.ts`，但 `002_position_accounting_fields.ts`（`position-funding-pnl` task 1.1）已經佔用 `002` 這個檔名與 `Migration.version`。`migrate.ts` 的 `migrate()`/`rollback()` 純粹以 `Migration.version`（一個與檔名無關的整數欄位）排序、過濾 pending migrations；沒有任何「migrations index/registry」檔案把所有 migration 聚合成陣列（production 尚未接線，目前只有各自的 `*.test.ts` 直接 import 自己的 migration）。解法：本 change 的 migration 改名為 `003_runtime_health.ts`、`version: 3`，不影響任何公開介面或其他 change 的輸出（`runtime_health` / `reconciliation_runs` 的 schema 本身與 Decision 3 完全一致）。
+- **`PaperTradingConfig`**：proposal.md「Impact」提到要在 `PaperTradingConfig` 新增 `reconciliation_interval_ms`、`health_publish_interval_ms`、`reconciliation_qty_epsilon`、`reconciliation_usdt_epsilon`，但 repo 裡還沒有任何檔案定義一個叫 `PaperTradingConfig` 的聚合 interface——`runtime/src/risk/types.ts` 的 `RiskConfig`、`runtime/src/session/types.ts` 的 `SessionTimingConfig` 都只在註解裡寫「`PaperTradingConfig` 的欄位」，各自定義自己的局部 config interface。本 change 比照同一慣例，在 `runtime/src/reconciliation/types.ts` 定義 `ReconciliationConfig`、在 `runtime/src/health/types.ts` 定義 `HealthConfig`，各自帶註解標明這是 `PaperTradingConfig` 的一部分、由本 change 擁有；不建立或修改任何共用的 `PaperTradingConfig` 檔案（沒有這個檔案可改，建立一個不在本 change 範圍內的空殼也無助於整合，留給之後真正組裝 Runtime 入口的 change/task 4 決定放置位置）。
+- **`EntryHaltPort` 的 `EntryHaltLatch` 持久化**：Decision 2 要求「重啟後仍生效、只有 `ENTRY_HALT_CLEARED` 能解除」。實作用 `Ledger.appendEvent` 寫 `ENTRY_HALT_REQUESTED` / `ENTRY_HALT_CLEARED`（`trade_id: null`，`NO_TRADE_EVENT_TYPES` 已包含兩者），`EntryHaltLatch` 建構時以 `EventStore.replay()` 重放所有 `ENTRY_HALT_REQUESTED` / `ENTRY_HALT_CLEARED` 事件、以時間序重建目前是否 halted 與 reasons（最後一個 `ENTRY_HALT_CLEARED` 之後若還有未被清除的 `ENTRY_HALT_REQUESTED`，視為仍 halted）。這與 Decision 2 的去重（`RECONCILIATION_ERROR` 以 `Set<check_id:entity_id>`，啟動時由未解決事件恢復）用同一種「replay 重建記憶體狀態」手法，不是新發明的介面。
+- **`reconciliation_runs` 寫入時機**：Decision 1「一致快照」用 `db.transaction` 包住整個讀取 pass；`reconciliation_runs` 這一列本身也在同一個 transaction 裡寫入（與讀取快照同一致性），確保「這次 run 讀到的資料」與「run 紀錄本身」不會因為併發寫入而不同步。
+
 ## Open Questions
 
 1. ~~**⚠️ C-16 (5)**：Reconciliation Error、重啟時進場中 Trade，是否應自動撤單 / 緊急平倉？~~ ✅ 2026-10-02 已決議：不自動，只停止新進場並標 FAILED（與本 change 現行行為一致）。
