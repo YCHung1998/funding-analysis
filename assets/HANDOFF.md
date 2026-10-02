@@ -192,6 +192,28 @@ B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run che
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
 
+### 2026-10-03（3）— Claude Sonnet 5，`paper-trading-ui` 收尾（分支 `feature-paper-trading-ui-wrapup`，來自 `docs/runtime-health-reconciliation-route-fix`）
+- **做了什麼**：完成 OpenSpec change `paper-trading-ui` 最後一項 task 4.1（收尾驗證）。Task 1.1–3.6（11/12）已於先前完成並合併進 `develop`；本次只做驗證 + 文件收尾，未改動任何 `*.tsx`、元件邏輯或既有測試斷言。
+  - `npm install --legacy-peer-deps`（design.md Risk 條目已預見 `esbuild`/`vite` peer-dep 衝突，沿用既定解法）。
+  - `npm run lint`（`tsc --noEmit`）→ 無輸出，通過。
+  - `npm run build`（vite build）→ 1721 modules transformed，✓ built in 677ms；產生獨立 chunk `dist/assets/PaperTradingTab-Dfj_gPRn.js`（57.76 kB，gzip 15.79 kB），與主 bundle `dist/assets/index-IxEiAlDU.js`（445.86 kB）分離，確認 1.1 的 lazy load 仍生效。
+  - `npm test`（vitest run）→ **151 個測試檔、1272 個測試全過**。
+  - `npx openspec validate paper-trading-ui --strict` → `Change 'paper-trading-ui' is valid`。
+  - 實際啟動 `npm run dev`：本機埠 3000 已被另一個 worktree 的既有 session 佔用，且本 change 的 tasks.md 前置明文「不改 `server.ts`」，故不修改埠號常數，改以 Node `--require` 的 preload script 在 process 層攔截 `net.Server.prototype.listen(3000)` 並重導向到本機埠 5190（純執行期行為，未改動任何追蹤檔案，已以 `git diff --stat` 確認 `server.ts` 零變更）。
+    - `VITE_PAPER_DATA_SOURCE=mock`：curl 確認 `/`（200）、`/src/main.tsx`（200）、`/src/features/paperTrading/PaperTradingTab.tsx`（200，模組轉譯無 500）、`/@vite/env` 回傳 `VITE_PAPER_DATA_SOURCE: "mock"` 確認注入生效。curl 無法渲染 React，故 Account → Current → Completed（含失敗篩選）→ Detail → Timeline → 瀑布圖 → Kill Switch 停用這段畫面行為改以**既有元件測試**作為證據（非肉眼目視、非口頭推論）：重跑 `AccountPanel.test.tsx`/`CurrentTradesTable.test.tsx`/`CompletedTradesTable.test.tsx`（含 `EMERGENCY_EXIT` 等 `final_status` 篩選案例）/`TradeDetail.test.tsx`/`TradeTimeline.test.tsx`/`PnlWaterfall.test.tsx`/`KillSwitchPlaceholder.test.tsx`（斷言 disabled 按鈕點擊不觸發 `fetch`）/`RuntimeHealthPanel.test.tsx`/`dataSource.test.ts`/`PaperTradingTab.test.tsx` 共 10 檔、41 個測試全過，這些測試針對同一套 `api/mock/fixtures.ts` 斷言畫面輸出，等同走完整條 mock 路徑。
+    - 預設 `live`（`VITE_PAPER_DATA_SOURCE` 未設）：proposal.md Non-goals 已預期後端尚未實作 `/api/paper/*`，故以 Node `fetch('http://localhost:5190/api/paper/health')` 實打驗證現況——回應 `200` 但 body 是 Vite SPA fallback 的 `index.html`（非 JSON），`res.json()` 丟出 `SyntaxError: Unexpected token '<'`；`dataSource.ts` 的 `liveDataSource` 直接 re-export `paperApi.*`、結構上沒有任何退回 mock 的程式路徑，該例外會成為 `health.error` 並經 `PaperTradingTab.tsx:117` 傳入 `RuntimeHealthPanel`；重跑 `RuntimeHealthPanel.test.tsx`「shows RUNTIME_UNREACHABLE when the Health API fails and there is no last-known data」案例通過，證實不會靜默退回 mock。待 `trading-schema-storage`/`runtime-health-reconciliation` 把 `/api/paper/*` 真正接上 `server.ts` 後，需重做這一步並記錄真實回應。
+  - README §4：確認已在先前 docs 整合（commit `f46ab96`）新增 Paper Trading 列、並把 M5 標 `MOCK`、M6/M7 標 `FROZEN`，內容仍準確，本次未再變動。
+  - `openspec/changes/paper-trading-ui/tasks.md`：task 4.1 標記 `[x]`，12/12 完成。
+- **驗證證據**：lint/build/test/openspec validate 完整輸出與上述測試檔名、HTTP 狀態碼皆如上列出；`PaperTradingTab-Dfj_gPRn.js` chunk 檔名可於 `npm run build` 輸出直接核對。
+- **沒做完 / 已知問題**：
+  - 上游 `trading-schema-storage`（Paper 唯讀 API）與 `runtime-health-reconciliation`（WebSocket 轉發）尚未接進 `server.ts`（屬 proposal.md Non-goals 預期範圍），故本次 live 模式驗證只能證明「連不上時不退回 mock、顯示 `RUNTIME_UNREACHABLE`」，不是端對端真實串接；上述兩者合併後需重跑此步驟。
+  - 本機 `devDependencies` 未安裝 Playwright / Puppeteer / Cypress 等瀏覽器自動化工具，故 Account → … → Kill Switch 的畫面操作是以 curl（確認無 500 / 模組可轉譯）+ 既有元件測試（證明渲染輸出）組合佐證，不是肉眼瀏覽器操作；若需要更高證據等級，建議另開 change 引入 Playwright。
+- **下一步建議**：
+  1. `trading-schema-storage`/`runtime-health-reconciliation` 的 `/api/paper/*`、`/ws/paper` 合併後，重跑一次 live 模式真實串接驗證並記錄結果。
+  2. 若要支援自動化瀏覽器走查，評估引入 Playwright（不在本 change 範圍）。
+  3. 使用者確認 12/12 任務皆驗收通過後，再執行 `/opsx:archive paper-trading-ui`（本次不歸檔）。
+- **需要使用者決定的事**：無新增；舊的非框架待定項（最低流動性門檻、`slippage_safety_buffer_pct`、`basis_sigma_pct`、`DEFAULT_FEE_TABLE` 官方查證、`research_min_net_pnl_usdt`）持續提醒。
+
 ### 2026-10-02 — Claude Sonnet 5，`paper-execution-engine` 雙腿執行（分支 `feature-paper-execution-engine-dualleg`，來自 `integration/paper-execution-engine`）
 - **做了什麼**：實作 OpenSpec change `paper-execution-engine` tasks 3.1–4.2（Task Group 1–2 已另行合併完成，不在本次範圍）：
   - 3.1 hedge ratio 接線：`runtime/src/trading/hedgeRatioEvent.ts`（`evaluateHedgeRatio`/`resolveHedgeThreshold`/`buildHedgeRatioChangedEvent`），直接 import `position-funding-pnl` 已合併的 `runtime/src/trading/hedgeRatio.ts`（`computeHedgeRatio`/`classifyHedge`），不重新實作公式；`hedge_ratio_basis` 可切換（**預設 `QUANTITY`，依 C-19 2026-10-02 已決議**，spec.md 文字仍標 `NOTIONAL` 為舊版未同步，此處以 design.md/C-19 決議為準）、`symbol_tier_overrides`、`HEDGE_RATIO_CHANGED` 事件同時記錄 `notional_ratio`/`quantity_ratio` 供對照。
