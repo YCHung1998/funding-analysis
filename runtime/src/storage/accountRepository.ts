@@ -148,7 +148,12 @@ export function createAccountRepository(db: SqliteDriver): AccountRepository {
   );
   const selectSnapshot = db.prepare(`SELECT * FROM account_snapshots WHERE snapshot_id = ?`);
   const selectLatestSnapshot = db.prepare(
-    `SELECT * FROM account_snapshots WHERE mode = ? ORDER BY snapshot_time DESC, snapshot_id DESC LIMIT 1`,
+    // `rowid` (SQLite's implicit insertion-order column; `snapshot_id` is a
+    // PRIMARY KEY but not WITHOUT ROWID) breaks snapshot_time ties by
+    // insertion order — tie-breaking on `snapshot_id` (a random UUID) was
+    // unreliable, since UUIDs never lexicographically sort above the
+    // harness's fixed "init" id (paper-execution-engine task 3.2 fix).
+    `SELECT * FROM account_snapshots WHERE mode = ? ORDER BY snapshot_time DESC, rowid DESC LIMIT 1`,
   );
 
   const upsertPnl = db.prepare(
