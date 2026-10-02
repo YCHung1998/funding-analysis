@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "tsx server.ts",
+    "runtime": "tsx runtime/src/main.ts",
     "build": "vite build",
     "preview": "vite preview",
     "start": "tsx server.ts",
