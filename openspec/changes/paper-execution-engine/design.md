@@ -139,6 +139,21 @@ runtime/test/scenarios/S01…S13.test.ts
    interleaving, so this is a documented simplification, not a spec
    violation. Does not change `ExecutionEngine`'s public surface.
 
+3. **Deterministic `order_id`/`fill_id`**: spec's reproducibility scenario
+   ("Same seed reproduces") compares "the two event logs (types, timestamps,
+   payloads excluding `event_id`/`recorded_at`)" — payloads are compared, and
+   `PaperOrder.order_id`/`Fill.fill_id` are embedded inside `payload.after`/
+   `payload.fill`. A fresh `crypto.randomUUID()` per order/fill (real
+   randomness, not seeded) would make every same-seed run differ on exactly
+   those fields. Resolved by making order/fill identity deterministic:
+   `order_id := client_order_id` (already caller-guaranteed-unique per order
+   — no reason to mint a second id), `fill_id := `${order_id}:fill:${n}``
+   (`n` = a per-order fill counter, itself deterministic since fills are
+   applied in deterministic depth-walking order). `event_id` continues to use
+   `crypto.randomUUID()` (explicitly excluded by the scenario). Does not
+   change `ExecutionEngine`'s public surface (`OrderRequest.client_order_id`
+   was already required).
+
 ## Open Questions
 
 1. ~~**⚠️ C-19**：hedge ratio 以名目或數量計算？~~ ✅ 2026-10-02 已決議：`QUANTITY`（合約乘數換算後的基礎資產數量），`hedge_ratio_basis` 預設已改。

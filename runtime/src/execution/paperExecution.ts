@@ -95,6 +95,7 @@ interface InternalOrder {
   deferredCancel: boolean;
   unsubscribeBookUpdates?: () => void;
   matchedLevelKeys: Set<string>;
+  fillSeq: number;
 }
 
 function endpointGuardReason(guard: FundingWindowGuard, request: OrderRequest, now: number): string | undefined {
@@ -120,7 +121,12 @@ export class PaperExecutionAdapter implements ExecutionEngine {
     }
 
     const now = this.deps.clock.now();
-    const orderId = crypto.randomUUID();
+    // Deterministic order identity (reproducibility, spec "Simulated latency
+    // and reproducible failure injection": "identical seed, config and inputs
+    // SHALL yield identical order states, fills, timestamps and event
+    // sequences") — `client_order_id` is already caller-guaranteed-unique per
+    // order, so it IS the order id rather than a fresh `crypto.randomUUID()`.
+    const orderId = request.client_order_id;
     const instrument = this.deps.instruments.getInstrument(request.exchange, request.symbol);
     const contractMultiplier = instrument?.contract_multiplier ?? 1;
     const stepSize = instrument?.step_size ?? 0;
@@ -171,6 +177,7 @@ export class PaperExecutionAdapter implements ExecutionEngine {
       ackTimeoutFired: false,
       deferredCancel: false,
       matchedLevelKeys: new Set(),
+      fillSeq: 0,
     };
 
     // Step-size / disconnect / stale-book / reject checks resolve at ACK time
@@ -279,6 +286,16 @@ export class PaperExecutionAdapter implements ExecutionEngine {
       this.notify(internal.order, []);
       return;
     }
+    const staleThreshold = this.deps.config.data_stale_threshold_ms;
+    if (staleThreshold !== undefined) {
+      const snapshot = this.deps.orderBook.getOrderBook(request.exchange, request.symbol);
+      const age = snapshot ? this.deps.clock.now() - snapshot.local_received_timestamp : Infinity;
+      if (age > staleThreshold) {
+        this.transition(internal, { order_state: 'REJECTED', rejection_reason: 'STALE_MARKET_DATA', terminal_time: this.deps.clock.now() }, 'stale market data');
+        this.notify(internal.order, []);
+        return;
+      }
+    }
     if (request.reduce_only) {
       const open = this.deps.positions.getOpenQuantity(request.leg_id);
       if (request.requested_quantity > open) {
@@ -363,6 +380,7 @@ export class PaperExecutionAdapter implements ExecutionEngine {
     const failure = this.deps.config.enable_failure_injection
       ? this.deps.config.failure_injection?.[request.exchange]
       : undefined;
+    if (isDisconnected(failure?.disconnect_windows, this.deps.clock.now())) return; // fills suspended while disconnected
     const liquidityMultiplier = failure?.liquidity_multiplier ?? 1;
     const priceShiftPct = failure?.price_shift_pct ?? 0;
     const shiftedLevels = levels.map((l) => ({
@@ -425,7 +443,7 @@ export class PaperExecutionAdapter implements ExecutionEngine {
       const fee = feeUsdt(notional, internal.takerFeeRate);
       internal.matchedLevelKeys.add(`${lf.price}`);
       return {
-        fill_id: crypto.randomUUID(),
+        fill_id: `${startBefore.order_id}:fill:${internal.fillSeq++}`,
         order_id: startBefore.order_id,
         trade_id: startBefore.trade_id,
         leg_id: startBefore.leg_id,
