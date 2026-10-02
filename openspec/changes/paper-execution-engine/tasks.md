@@ -3,7 +3,8 @@
 
 ## 1. 介面
 
-- [ ] 1.1 `executionInterface.ts`（`ExecutionEngine`、`OrderRequest`、ports）＋ `runtime/test/fakes/` ＋ `executionEngine.contract.ts` 契約測試；原始碼檢查：trading/strategy 不 import `paperExecution`、無真實下單端點、execution/trading 無交易所名稱字串
+- [x] 1.1 `executionInterface.ts`（`ExecutionEngine`、`OrderRequest`、ports）＋ `runtime/test/fakes/` ＋ `executionEngine.contract.ts` 契約測試；原始碼檢查：trading/strategy 不 import `paperExecution`、無真實下單端點、execution/trading 無交易所名稱字串
+  - Evidence: `runtime/src/execution/executionInterface.ts` (interface + 5 ports); `runtime/test/fakes/{fakeOrderBook,fakeGuard,fakeFeeRates,fakeInstruments,fakePositions,testLedger}.ts`; `runtime/test/contracts/executionEngine.contract.ts` (reusable suite: submit→ACK→fill, cancel, getOrder consistency, onOrderUpdate) run against `PaperExecutionAdapter` in `runtime/src/execution/paperExecution.contract.test.ts`; source checks in `runtime/test/executionArchitecture.test.ts` (no `paperExecution` import from trading/strategy, no real order endpoints, no HTTP client in execution/, no exchange-name literals in execution/trading). Minimal `PaperExecutionAdapter` added in `runtime/src/execution/paperExecution.ts` (+ `rng.ts`, `matching.ts`, `failureInjection.ts` scaffolding) plus `Ledger.createOrder` in `runtime/src/storage/ledger.ts`. Confirmed red (missing module) before implementing; green after. `npm run lint && npm run build && npm test` all pass.
 
 ## 2. PaperExecutionAdapter
 

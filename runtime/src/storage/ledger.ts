@@ -129,6 +129,36 @@ export class Ledger {
     });
   }
 
+  /**
+   * Order creation (paper-execution-engine spec "Order state machine per
+   * C-14": "`CREATED → SUBMITTED` SHALL be committed in the same transaction
+   * as the order's creation inside `submit`"). `ORDER_CREATED` has no `from`
+   * state in `ORDER_TRANSITIONS`, so it is appended directly here — mirroring
+   * `reserveCapitalAndCreateTrade`'s `TRADE_CREATED` — immediately followed,
+   * in the same transaction, by the `CREATED → SUBMITTED` transition event
+   * via the same machinery `applyOrderTransition` uses. `created` is never
+   * persisted on its own row; only `submitted` is written.
+   */
+  createOrder(created: PaperOrder, submitted: PaperOrder, reason: string): { order: PaperOrder; events: StoredTradingEvent[] } {
+    return this.db.transaction(() => {
+      const createdEvent = this.eventStore.append({
+        event_id: crypto.randomUUID(),
+        event_type: 'ORDER_CREATED',
+        timestamp: created.created_at,
+        trade_id: created.trade_id,
+        leg_id: created.leg_id,
+        order_id: created.order_id,
+        payload: { after: created },
+      });
+      this.repos.order.saveOrder(submitted);
+      const transitionEvent = makeTransitionEvent('ORDER', created as never, submitted as never, reason, this.clock);
+      const submittedEvent = this.eventStore.append(transitionEvent as AppendEventInput);
+      const events = [createdEvent, submittedEvent];
+      for (const e of events) this.publishToUi(e);
+      return { order: submitted, events };
+    });
+  }
+
   applyOrderTransition(before: PaperOrder, after: PaperOrder, reason: string): { order: PaperOrder; event: StoredTradingEvent } {
     return this.db.transaction(() => {
       this.repos.order.saveOrder(after);
