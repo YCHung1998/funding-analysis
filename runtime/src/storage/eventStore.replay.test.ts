@@ -13,13 +13,14 @@ import { NodeSqliteDriver } from './driver';
 import { EventStore } from './eventStore';
 import { migrate } from './migrate';
 import { migration001 } from './migrations/001_initial';
+import { migration002 } from './migrations/002_position_accounting_fields';
 import { createOrderRepository } from './orderRepository';
 import { createTradeRepository } from './tradeRepository';
 import { tmpDriver } from './test-helpers';
 
 function freshDb(): NodeSqliteDriver {
   const db = tmpDriver();
-  migrate(db, [migration001]);
+  migrate(db, [migration001, migration002]);
   return db;
 }
 
@@ -267,6 +268,14 @@ describe('EventStore replay / rebuildProjections', () => {
       opened_at: 1050,
       created_at: 1050,
       updated_at: 1050,
+      base_quantity: 0.1,
+      entry_filled_quantity: 0.1,
+      exit_filled_quantity: 0,
+      entry_notional_usdt: 1000,
+      realized_price_pnl_usdt: 0,
+      fees_usdt: 0,
+      slippage_attribution_usdt: 0,
+      applied_fill_ids: ['fill1'],
     };
     const positionShortOpen: PaperPosition = { ...positionLongOpen, position_id: 'pos2', leg_id: 'leg2', exchange: 'Bybit', position_side: 'SHORT', average_entry_price: 10010 };
     const positionLongClosed: PaperPosition = { ...positionLongOpen, status: 'CLOSED', closed_at: 1950, updated_at: 1950 };

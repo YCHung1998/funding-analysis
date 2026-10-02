@@ -32,7 +32,15 @@ export interface AccountSnapshot {
   updated_at: number;
 }
 
-/** Storage row; position-level computation semantics belong to `position-accounting`. */
+/**
+ * Storage row; position-level computation semantics belong to
+ * `position-accounting` (`position-funding-pnl`, design.md Decision 2).
+ *
+ * `quantity` = open **contract** quantity (same unit as `Fill.quantity`).
+ * `status` is derived solely from whether `base_quantity > 0` — leg-level
+ * states (`OPEN`/`PARTIAL`/`CLOSED`/...) remain the Trade Manager's
+ * `TradeLeg.status`, intentionally not duplicated here.
+ */
 export interface PaperPosition {
   position_id: string;
   trade_id: string;
@@ -47,4 +55,23 @@ export interface PaperPosition {
   closed_at?: number;
   created_at: number;
   updated_at: number;
+
+  /** Additive (position-funding-pnl design.md Decision 2). Open base-asset quantity = `quantity x contract_multiplier`. */
+  base_quantity: number;
+  /** Additive — cumulative contract quantity filled by entry Fills (never decreases). */
+  entry_filled_quantity: number;
+  /** Additive — cumulative contract quantity filled by exit Fills (never decreases). */
+  exit_filled_quantity: number;
+  /** Additive — Sigma of entry Fill.notional_usdt; mirrored onto TradeLeg.actual_notional_usdt. */
+  entry_notional_usdt: number;
+  /** Additive — weighted-average exit fill price; unset until the first exit Fill. */
+  average_exit_price?: number;
+  /** Additive — cumulative realized Price PnL from exit Fills (actual avg prices, slippage included). */
+  realized_price_pnl_usdt: number;
+  /** Additive — cumulative fees across all Fills applied to this position (positive = cost). */
+  fees_usdt: number;
+  /** Additive — cumulative slippage attribution across all Fills (negative = cost; attribution only). */
+  slippage_attribution_usdt: number;
+  /** Additive — applied `Fill.fill_id`s, for idempotency (duplicate Fill re-application is a no-op). */
+  applied_fill_ids: string[];
 }

@@ -278,6 +278,16 @@ const POSITION_COLUMNS = [
   'closed_at',
   'created_at',
   'updated_at',
+  // position-funding-pnl additive fields (migration 002):
+  'base_quantity',
+  'entry_filled_quantity',
+  'exit_filled_quantity',
+  'entry_notional_usdt',
+  'average_exit_price',
+  'realized_price_pnl_usdt',
+  'fees_usdt',
+  'slippage_attribution_usdt',
+  'applied_fill_ids',
 ] as const;
 
 function positionToRow(position: PaperPosition): unknown[] {
@@ -295,6 +305,15 @@ function positionToRow(position: PaperPosition): unknown[] {
     optionalToRow(position.closed_at),
     position.created_at,
     position.updated_at,
+    position.base_quantity,
+    position.entry_filled_quantity,
+    position.exit_filled_quantity,
+    position.entry_notional_usdt,
+    optionalToRow(position.average_exit_price),
+    position.realized_price_pnl_usdt,
+    position.fees_usdt,
+    position.slippage_attribution_usdt,
+    JSON.stringify(position.applied_fill_ids),
   ];
 }
 
@@ -312,6 +331,15 @@ interface PositionRow {
   closed_at: number | null;
   created_at: number;
   updated_at: number;
+  base_quantity: number;
+  entry_filled_quantity: number;
+  exit_filled_quantity: number;
+  entry_notional_usdt: number;
+  average_exit_price: number | null;
+  realized_price_pnl_usdt: number;
+  fees_usdt: number;
+  slippage_attribution_usdt: number;
+  applied_fill_ids: string;
 }
 
 function rowToPosition(row: PositionRow): PaperPosition {
@@ -329,6 +357,15 @@ function rowToPosition(row: PositionRow): PaperPosition {
     closed_at: optionalFromRow(row.closed_at),
     created_at: row.created_at,
     updated_at: row.updated_at,
+    base_quantity: row.base_quantity,
+    entry_filled_quantity: row.entry_filled_quantity,
+    exit_filled_quantity: row.exit_filled_quantity,
+    entry_notional_usdt: row.entry_notional_usdt,
+    average_exit_price: optionalFromRow(row.average_exit_price),
+    realized_price_pnl_usdt: row.realized_price_pnl_usdt,
+    fees_usdt: row.fees_usdt,
+    slippage_attribution_usdt: row.slippage_attribution_usdt,
+    applied_fill_ids: JSON.parse(row.applied_fill_ids) as string[],
   };
 }
 
