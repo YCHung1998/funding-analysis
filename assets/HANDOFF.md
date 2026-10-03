@@ -192,6 +192,31 @@ B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run che
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
 
+### 2026-10-03（4）— Claude Sonnet 5，`runtime-health-reconciliation` 收尾（分支 `feature-runtime-health-reconciliation-startup`，來自 `integration/wave3` commit `4a23caf`）
+- **做了什麼**：完成 OpenSpec change `runtime-health-reconciliation` 最後兩個 Task Group（4、5）。Task Group 1-3（1.1–3.2）已於先前完成並合併進 `integration/wave3`；本次實作：
+  - task 4.1：`runtime/src/main.ts`（`runStartup(deps)` 12 步啟動流程純函式核心 + `main()` production bootstrap）、`runtime/src/startup/types.ts`（`Startable`/`CredentialsPort`/`ExchangeConnectPort`/`MarketDataValidationPort`/`PaperExecutionArmPort` 等小介面與佔位實作）、`runtime/src/health/types.ts`（新建 `HealthConfig`）；`package.json` 新增 `"runtime": "tsx runtime/src/main.ts"`。
+  - task 4.2：`runtime/src/health/recovery.ts`（`recoverFromEventStore`：未終態 Order 合法轉換關閉、進場中 Trade → FAILED + entry halt、HEDGED/EXIT_PENDING 交給新建的 `SettlementRecoveryHandoff` port、投影一致性以拋棄式 `:memory:` scratch DB 重建比對）。
+  - task 4.3：4 個 scenario 測試檔（`restartRecovery`、`reconciliationEntryHalt`、`healthExchangeDisconnect`、`serverRuntimeIndependence`），每個皆以 `assertTraceability` 收尾。
+  - task 5.1：全套驗證 + 本條目。
+  - 過程中手動以真實 `npm run runtime` + `npm run dev` 互打時，發現並修正一個 bug：`startPeriodicHealthPublish` 原本把 `credentials` 寫死 `'PRESENT'`，導致開機當下正確判定的 `ADVISORY`（缺憑證）狀態在第一次週期性 Health 發佈後就被蓋寫成假的 `PRESENT`——已修正為每個 tick 重新呼叫 `CredentialsPort.validate()`，並補一個回歸測試（`main.test.ts` 的 `startPeriodicHealthPublish` describe block）。
+- **驗證證據**：
+  - `npm run lint`（`tsc --noEmit`）→ 無輸出，通過。
+  - `npm run build`（vite build）→ 1721 modules transformed，✓ built in ~300ms（與既有 chunk 分離狀況一致，未變動前端程式碼）。
+  - `npm test`（vitest run）→ **165 個測試檔、1359 個測試全過**（起始基準為 159 檔/1339 測試）。
+  - `npx openspec validate runtime-health-reconciliation --strict` → `Change 'runtime-health-reconciliation' is valid`；`npx openspec validate --all --strict` → `Totals: 19 passed, 0 failed`。
+  - 實際啟動 `npm run runtime`（約 4 秒後手動中止進程）：終端輸出 `[runtime] startup complete, tier=ADVISORY armed=false`（因佔位 `NoCredentialsPort` 永遠回報 `MISSING`，這是刻意保守預設，design.md Implementation Notes 已記錄）；`data/paper.sqlite`（含 WAL/SHM）與 `data/backup/<timestamp>.sqlite` 皆正確建立，驗證後已刪除（`.gitignore` 已排除，從未入版控）。
+  - 同時啟動 `npm run runtime` 與 `npm run dev`，`curl http://localhost:3000/api/paper/health` 回應：`{"engine":"RUNNING","exchanges":[],"market_data":"HEALTHY","scanner":"RUNNING","risk_engine":"ARMED","paper_execution":"DISARMED","database":"HEALTHY","last_event_at":...,"runtime_heartbeat_at":...,"server_time":...,"clock":"RELIABLE","credentials":"MISSING","entry_allowed":false,"entry_block_reasons":["PAPER_EXECUTION_DISARMED","CREDENTIALS_MISSING"]}`（修正 bug 後 `credentials` 正確反映 `MISSING`，而非蓋寫後的假 `PRESENT`）；`curl http://localhost:3000/api/runtime/reconciliation/latest` 回應 `{"run":{"run_id":"...","started_at":...,"completed_at":...,"checks_run":2,"mismatch_count":0,"mismatches":[]}}`。兩個進程驗證後皆已手動 `kill`。
+  - `git diff --stat openspec/changes/runtime-health-reconciliation/tasks.md`/`design.md` 確認只新增內容，既有 1.1–3.2 文字逐字未動；`assets/HANDOFF.md` 本條目為純新增（append），未修改本節其餘既有條目任一行。
+- **沒做完 / 已知問題**：
+  - production bootstrap 目前把 `market-data-stream`/`risk-engine`/憑證驗證接到 `startup/types.ts` 的佔位實作（`NoopStartable`/`NoCredentialsPort`/`AlwaysFreshMarketDataValidationPort`），因此 `npm run runtime` 目前必定落在 `ADVISORY` 層、Paper Execution 維持 `DISARMED`——這是 proposal.md Non-goals 明文排除的範圍，待對應 change 實作後只需替換這幾個 port。
+  - `health/recovery.ts` 的 `SettlementRecoveryHandoff` 同樣是佔位（`settlement-session` 尚未提供「註冊既有 Trade」介面，design.md Open Question 6 仍未解）。
+  - `main.ts` production bootstrap 有一個記錄在案、範圍很窄的邊界情況尚未處理：repository 建構需要 schema 已存在，因此在 `runStartup` 自己的 step 2（backup+migrate）跑之前，`buildProductionDeps` 會先呼叫一次 `migrate()`；若未來某天 `data/paper.sqlite` 是從別的流程留下、且帶有尚未套用的 migration，這些 migration 會在備份**之前**被套用（見 design.md Implementation Notes「task 4.1 production bootstrap 的 repository 建構順序」）。目前整個 repo 只有這一個會寫入 `data/paper.sqlite` 的 production entrypoint，故此情況實務上不會發生。
+- **下一步建議**：
+  1. `paper-trading-read-api`（平行開發中的另一個 change）或後續 change 接上 `market-data-stream`/`risk-engine`/憑證驗證的真實實作後，替換 `main.ts` 的佔位 port。
+  2. `settlement-session` 補上「註冊既有 Trade」介面後，替換 `recovery.ts` 的 `NoopSettlementRecoveryHandoff`。
+  3. Open Questions 2（停止進場的解除流程）、3（FAILED Trade 的保留資金釋放時機）仍待使用者決定，詳見 design.md。
+- **需要使用者決定的事**：design.md Open Questions 2、3、4、5（啟動步驟調整是否回寫技術書 §39、Health 元件值枚舉是否加入術語表）——皆為先前 Task Group 遺留、非本次新增，本次未擅自決定，持續提醒中（依 memory「Undecided items policy」）。
+
 ### 2026-10-03（3）— Claude Sonnet 5，`paper-trading-ui` 收尾（分支 `feature-paper-trading-ui-wrapup`，來自 `docs/runtime-health-reconciliation-route-fix`）
 - **做了什麼**：完成 OpenSpec change `paper-trading-ui` 最後一項 task 4.1（收尾驗證）。Task 1.1–3.6（11/12）已於先前完成並合併進 `develop`；本次只做驗證 + 文件收尾，未改動任何 `*.tsx`、元件邏輯或既有測試斷言。
   - `npm install --legacy-peer-deps`（design.md Risk 條目已預見 `esbuild`/`vite` peer-dep 衝突，沿用既定解法）。

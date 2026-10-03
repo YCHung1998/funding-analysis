@@ -24,4 +24,4 @@
 
 ## 5. 收尾
 
-- [ ] 5.1 執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate runtime-health-reconciliation --strict` 全數通過並附輸出；實際啟動 `npm run runtime` 與 `npm run dev` 後打 `/api/paper/health` 記錄結果；更新 HANDOFF §7 交接紀錄
+- [x] 5.1 執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate runtime-health-reconciliation --strict` 全數通過並附輸出；實際啟動 `npm run runtime` 與 `npm run dev` 後打 `/api/paper/health` 記錄結果；更新 HANDOFF §7 交接紀錄。證據：`npm run lint` 無輸出通過；`npm run build` 1721 modules transformed 成功；`npm test` 165 個測試檔、1359 個測試全過；`npx openspec validate runtime-health-reconciliation --strict` → valid；`npx openspec validate --all --strict` → 19/19 passed。實際啟動 `npm run runtime`（ADVISORY tier，佔位憑證 port 永遠回報 MISSING）＋ `npm run dev`，`curl /api/paper/health` 正確回傳 `credentials:"MISSING"`、`entry_allowed:false`、`entry_block_reasons:["PAPER_EXECUTION_DISARMED","CREDENTIALS_MISSING"]`；`curl /api/runtime/reconciliation/latest` 正確回傳 `mismatch_count:0`。過程中發現並修正 `startPeriodicHealthPublish` 把 `credentials` 寫死 `PRESENT` 的 bug（獨立 commit，補回歸測試）。`assets/HANDOFF.md` §7 新增一筆 2026-10-03（4）條目，`git diff` 確認純新增、既有內容逐字未動。詳見 HANDOFF.md 該條目完整記錄。
