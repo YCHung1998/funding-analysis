@@ -492,11 +492,11 @@ export function getCompletedTrades(
   const clauses: string[] = [];
   const params: unknown[] = [];
   if (filter.final_status) {
-    clauses.push('tr.final_status = ?');
+    clauses.push('final_status = ?');
     params.push(filter.final_status);
   }
   if (cursorKey) {
-    clauses.push('(COALESCE(tr.finalized_at, tr.updated_at), tr.trade_id) < (?, ?)');
+    clauses.push('(COALESCE(finalized_at, updated_at), trade_id) < (?, ?)');
     params.push(cursorKey.sort_key, cursorKey.trade_id);
   }
   const where = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
