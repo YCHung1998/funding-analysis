@@ -192,6 +192,44 @@ B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run che
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
 
+### 2026-10-03（4）— Claude Sonnet 5，`paper-trading-read-api`（分支 `feature-paper-trading-read-api`，來自 `integration/wave3` commit `4a23caf`）
+- **做了什麼**：實作 OpenSpec change `paper-trading-read-api` 全部 6 項 task（Task Group 1–4）：
+  - 1.1 `server/paperReadLayer.ts`：`new DatabaseSync(dbPath, { readOnly: true })`（`openPaperDb`）、`getAccountSnapshot()`（latest by `created_at`）、`PaperReadLayerUnavailableError` 統一處理 DB/表不存在與無資料列兩種情況（→ 503）。
+  - 1.2 `server/paperCursor.ts`：`encodeCursor`/`decodeCursor`（base64url JSON），格式錯誤回 `null`（呼叫端轉 400）。
+  - 2.1 `getCurrentTrades()`：排除終態、警示狀態（`LEG_IMBALANCE`/`EMERGENCY_EXIT`）優先、群內 `created_at` desc。
+  - 2.2 `getCompletedTrades(filter, cursor, limit)`：keyset 分頁（`finalized_at ?? updated_at` desc + `trade_id` tie-break）、`final_status` 篩選、並發插入下分頁穩定。
+  - 2.3 `getTradeDetail(tradeId)`：open trade 無 `result` key、closed trade 含 `result`、未知 id → `undefined`/404。
+  - 3.1 `getTradeEvents(tradeId, cursor, limit)`：`seq` 升冪、keyset 分頁、未知 trade_id → 404。
+  - `server.ts`：新增 4 條唯讀 GET 路由（`/api/paper/account`、`/api/paper/trades`（`scope=current`/`scope=completed`）、`/api/paper/trades/:trade_id`、`/api/paper/trades/:trade_id/events`），未修改既有 5 條路由（3 條 market-data + `runtime-health-reconciliation` 的 2 條）。
+  - **發現並解決的 schema 缺口**：`runtime/src/types/result.ts` 的 `TradeResult` 從未有對應資料表（只在記憶體組裝，寫入時機留給尚不存在的 Runtime 主迴圈——見本檔 2026-10-02 `position-funding-pnl` 條目「下一步建議」第 2 項）。design.md 原「no schema migration」假設已過期，因為 A-6（completed）/A-7（trade detail 的 `result`）完全依賴這張表。新增 `runtime/src/storage/migrations/004_trade_results.ts`（additive、reversible，欄位與 `TradeResult` 1:1，沿用 001–003 慣例）解決，已記錄於 `paper-trading-read-api/design.md` Implementation Notes。
+  - **A-5 採用真實 `AccountSnapshot` 形狀**：`GET /api/paper/account` 回 `runtime/src/types/account.ts` 的真實 `AccountSnapshot`（`snapshot_id`/`mode`/`snapshot_time`/`total_capital_usdt`/`reserved_capital_usdt`/`available_capital_usdt`/`used_margin_usdt`/`realized_pnl_usdt`/`open_trade_count`/`reason`/`trade_id?`/`config_version`/`created_at`/`updated_at`），**不是**原始 `paper-trading-ui/design.md` A-5 文字形狀（無 `allocated_capital_usdt`/`current_positions`/`max_positions`/`snapshot_at`）——此決議已記錄在 `paper-trading-read-api/design.md` Decision 3（延續 `paper-trading-ui` 前端已實作的 `AccountPanel.tsx` 對真實欄位的渲染方式，非本次新決定）。
+  - **`CurrentTradeSummary` 衍生欄位缺口**：proposal.md Non-goals 聲稱 `hedge_ratio`/`unrealized_pnl_usdt`/`funding_expected_usdt` 已存在於 Runtime 實體上，但實際檢查 `001_initial.ts` 後發現 `trades`/`trade_legs` 並無這些欄位。解法：`long_exchange`/`short_exchange` 取自 `trade.legs[].exchange`；`hedge_ratio` 重用既有的 `runtime/src/trading/hedgeRatio.ts` `computeHedgeRatio(..., 'QUANTITY')`（C-19 決議 basis），輸入來自 `positions` 表（非新公式）；`unrealized_pnl_usdt` 取自既有欄位 `pnl_snapshots.unrealized_pnl_usdt`（最新一筆）；`funding_expected_usdt` 為 `funding_settlements` 中 `EXPECTED`/`ELIGIBLE` 狀態的 `expected_cashflow_usdt` 加總。已記錄於 design.md Implementation Notes。
+- **驗證證據**：
+  - 每項任務皆先寫失敗測試（`004_trade_results.test.ts`/`paperReadLayer.test.ts`/`paperCursor.test.ts`/`paperReadLayer.currentTrades.test.ts`/`paperReadLayer.completedTrades.test.ts`/`paperReadLayer.tradeDetail.test.ts`/`paperReadLayer.tradeEvents.test.ts` 皆先確認紅燈再補實作轉綠；過程中由測試抓到一個真實 bug——`getCompletedTrades` 早期 JOIN 版本留下的 `tr.` 表別名殘留，導致 `no such column: tr.trade_id` / `tr.final_status`，已修正為直接查 `trade_results` 單表）。
+  - `npm run lint`（`tsc --noEmit`）→ 無輸出，通過。
+  - `npm run build`（vite build）→ 1721 modules transformed，✓ built in ~260-280ms。
+  - `npm test`（`vitest run`）→ **166 個測試檔、1372 個測試全過**（本次新增：`004_trade_results.test.ts` 4、`paperReadLayer.test.ts` 5、`paperCursor.test.ts` 6、`paperReadLayer.currentTrades.test.ts` 5、`paperReadLayer.completedTrades.test.ts` 5、`paperReadLayer.tradeDetail.test.ts` 3、`paperReadLayer.tradeEvents.test.ts` 5，共 33 個新測試）。
+  - `npx openspec validate paper-trading-read-api --strict` → `Change 'paper-trading-read-api' is valid`。
+  - 實際啟動 `npx tsx server.ts`（`PAPER_DB_PATH` 指向一個以 001-004 migrations + 真實 repository 寫入的 temp-dir fixture DB，非真實交易所資料）並以 curl 打四個端點：
+    - `GET /api/paper/account` → `200`，回真實 `AccountSnapshot` JSON。
+    - `GET /api/paper/trades?scope=current` → `200`，`items[0]` 含 `long_exchange: "Binance"`、`short_exchange: "Bybit"`、`hedge_ratio: 0.9`（9/10，QUANTITY basis）、`unrealized_pnl_usdt: 0`、`funding_expected_usdt: 0`（fixture 未寫入對應列，驗證預設值邏輯）。
+    - `GET /api/paper/trades?scope=completed` → `200`，`items[0].result.final_status: "PROFIT"`、`next_cursor: null`。
+    - `GET /api/paper/trades/:trade_id` → `200`（已知 id，含完整 `legs`/`orders`/`fills`/`funding_settlements`/`opportunity`）、`404`（未知 id，body `{"error":"TRADE_NOT_FOUND"}`）。
+    - `GET /api/paper/trades/:trade_id/events` → `200`，`seq` 1→2 升冪。
+    - `GET /api/paper/trades?scope=completed&cursor=not-valid-base64` → `400`，body `{"error":"MALFORMED_CURSOR"}`。
+    - `PAPER_DB_PATH` 指向不存在的路徑時，四個端點皆正確回 `503`，body `{"error":"Paper Trading database is not available yet"}`。
+    - 驗證後暫存 DB 與 seed script 已刪除，未入版控。
+- **沒做完 / 已知問題**：
+  - `trade_results` 表目前無任何寫入路徑（本 change 刻意不實作——與其他每張被讀的表一樣，寫入由 Runtime 主迴圈負責，尚未落地）；真實環境下，直到 Runtime 主迴圈接上 `tradeResultAssembler.ts` 並寫入這張表之前，A-6 completed / A-7 的 `result` 永遠是空的。
+  - `CurrentTradeSummary` 的 `hedge_ratio`/`unrealized_pnl_usdt`/`funding_expected_usdt` 依賴 `positions`/`pnl_snapshots`/`funding_settlements` 已有資料；若 Runtime 尚未對某個 current trade 寫入這些表的對應列，欄位會回傳預設值（`hedge_ratio: 0`、`unrealized_pnl_usdt: 0`、`funding_expected_usdt: 0`），這是合理的「尚無資料」預設，非 bug，但未來若有欄位語意疑慮應先確認。
+  - design.md Open Question 1（Auth/session）、2（DB path 設定來源）仍未決定，本次沿用 `runtime-health-reconciliation` 已用的 `PAPER_DB_PATH` 環境變數 + `data/paper.sqlite` 預設慣例，未做新決定。
+  - `paper-trading-event-stream`（A-9 `/api/paper/events`、A-10 `/ws/paper`）不在本次範圍，依 proposal.md Non-goals。
+- **下一步建議**：
+  1. Runtime 主迴圈落地時：在 Trade/Leg 終態處呼叫 `tradeResultAssembler.ts` 的 `assembleTradeResult`，並寫入本次新增的 `trade_results` 表（`shouldEmitTradeCompleted` 已存在，只缺實際寫入呼叫）。
+  2. `paper-trading-event-stream` 實作時直接 `import` 本次的 `server/paperReadLayer.ts`/`server/paperCursor.ts`（兩者 export 皆保持公開，未做 private 化）。
+  3. 使用者確認 6/6 任務皆驗收通過後，再執行 `/opsx:archive paper-trading-read-api`（本次不歸檔）。
+- **需要使用者決定的事**：無新增；舊的非框架待定項（最低流動性門檻、`slippage_safety_buffer_pct`、`basis_sigma_pct`、`DEFAULT_FEE_TABLE` 官方查證、`research_min_net_pnl_usdt`）持續提醒，不影響本次交付。
+
 ### 2026-10-03（3）— Claude Sonnet 5，`paper-trading-ui` 收尾（分支 `feature-paper-trading-ui-wrapup`，來自 `docs/runtime-health-reconciliation-route-fix`）
 - **做了什麼**：完成 OpenSpec change `paper-trading-ui` 最後一項 task 4.1（收尾驗證）。Task 1.1–3.6（11/12）已於先前完成並合併進 `develop`；本次只做驗證 + 文件收尾，未改動任何 `*.tsx`、元件邏輯或既有測試斷言。
   - `npm install --legacy-peer-deps`（design.md Risk 條目已預見 `esbuild`/`vite` peer-dep 衝突，沿用既定解法）。

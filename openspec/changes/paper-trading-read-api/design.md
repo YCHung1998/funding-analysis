@@ -167,3 +167,34 @@ auth/session (Open Question 1).
    `assets/HANDOFF.md` §8. This change's `paperReadLayer.ts` needs the same path `runtime-health-
    reconciliation`'s health publisher resolves to; both should read it from the same config source
    once that's settled, to avoid two independently-hardcoded paths drifting apart.
+
+## Implementation Notes (2026-10-03, implementing agent)
+
+- **`trade_results` table didn't exist — this Migration Plan's "no schema migration" assumption was
+  stale.** `runtime/src/types/result.ts`'s `TradeResult` (spec §21) has never had a persisted table:
+  `runtime/src/accounting/tradeResultAssembler.ts` only assembles the value in memory, and
+  `assets/HANDOFF.md`'s `position-funding-pnl` entry explicitly defers "何時提交 TradeResult 到資料庫"
+  to the not-yet-built Runtime main loop / Trade Manager. Both `getCompletedTrades` (A-6) and
+  `getTradeDetail`'s `result` field (A-7) are unimplementable without this table. Resolved by adding
+  `runtime/src/storage/migrations/004_trade_results.ts` (additive, reversible, column layout 1:1 with
+  `TradeResult`, same conventions as 001-003) — not a Runtime business-logic change, purely the
+  storage schema this change's own read routes require. The write side (inserting into this table)
+  remains out of scope here, same as every other table this change reads.
+- **`CurrentTradeSummary`'s `long_exchange`/`short_exchange`/`hedge_ratio`/`unrealized_pnl_usdt`/
+  `funding_expected_usdt` are not materialized columns anywhere** — contradicting proposal.md's
+  Non-goals claim that these "already exist... this change reads and serializes them, it does not
+  compute them." Verified against `runtime/src/storage/migrations/001_initial.ts`: no such columns on
+  `trades` or `trade_legs`. Resolved, in `server/paperReadLayer.ts`'s `deriveCurrentTradeFields`:
+  - `long_exchange` / `short_exchange`: read off `trade.legs[].exchange` by `direction` (trivial, no
+    computation).
+  - `hedge_ratio`: derived from the `positions` table's `base_quantity` / `average_entry_price` via
+    the Runtime's own existing pure helper, `runtime/src/trading/hedgeRatio.ts`'s
+    `computeHedgeRatio(..., 'QUANTITY')` (C-19's decided basis) — reused as-is, not reforked, so this
+    stays "read + reuse an already-tested formula over already-persisted columns" rather than new
+    business logic. `0` when either leg has no `positions` row yet (not opened).
+  - `unrealized_pnl_usdt`: `pnl_snapshots.unrealized_pnl_usdt`, latest row for the trade (`0` if none
+    yet) — this one *is* an existing materialized column, no computation needed.
+  - `funding_expected_usdt`: `SUM(funding_settlements.expected_cashflow_usdt)` for the trade where
+    `settlement_status IN ('EXPECTED', 'ELIGIBLE')` — a plain aggregate read, no business logic.
+  This does not change any response field name or shape `paperApi.ts`/`contracts.ts`/
+  `CurrentTradesTable.tsx` depend on — only how the server computes the value server-side.
