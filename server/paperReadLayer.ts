@@ -919,3 +919,27 @@ export function getTradeEvents(
 
   return { items: page, next_cursor };
 }
+
+// ---------------------------------------------------------------------------
+// Global event catch-up (A-9, `paper-trading-event-stream` task 2.1)
+// ---------------------------------------------------------------------------
+
+export interface GlobalEventsPage {
+  items: Array<TradingEvent & { seq: number }>;
+}
+
+/**
+ * `GET /api/paper/events` (A-9). Flat, global (any trade) catch-up — no
+ * `next_cursor` (design.md Decision 3 there: the caller resumes by passing
+ * `after_seq = <max seq already received>`; `seq` itself is the resumption
+ * token). Reused as-is by `server/paperEventTailer.ts`'s poll loop (same
+ * query shape, same row mapping) rather than redefining the query twice.
+ */
+export function getEventsAfter(reader: PaperReaderDriver | undefined, afterSeq: number, limit: number): GlobalEventsPage {
+  const rows = selectAll<TradingEventRow>(
+    reader,
+    `SELECT * FROM trading_events WHERE seq > ? ORDER BY seq ASC LIMIT ?`,
+    [afterSeq, limit],
+  );
+  return { items: rows.map(rowToTradingEvent) };
+}
