@@ -18,7 +18,7 @@
 
 ## 3. 事件端點
 
-- [ ] 3.1 `getTradeEvents(tradeId, cursor, limit)` + `GET /api/paper/trades/:trade_id/events`：`seq` 升冪、keyset 分頁（重用 `paperCursor.ts`）、未知 trade_id → 404
+- [x] 3.1 `getTradeEvents(tradeId, cursor, limit)` + `GET /api/paper/trades/:trade_id/events`：`seq` 升冪、keyset 分頁（重用 `paperCursor.ts`）、未知 trade_id → 404。證據：`server/paperReadLayer.ts`（`getTradeEvents`：先查 `trades` 確認 trade_id 存在（未知回 `undefined` → 404，而非用空事件列表誤判——新交易本來就可能尚無事件），再用 `WHERE trade_id = ? [AND seq > ?] ORDER BY seq ASC LIMIT ?`、`paperCursor.ts` 的 `encodeCursor`/`decodeCursor` 處理 `{ seq }` keyset）、`server/paperReadLayer.tradeEvents.test.ts`（5 tests，事件經真實 `EventStore.append`（`runtime/src/storage/eventStore.ts`）寫入，`seq` 由 SQLite AUTOINCREMENT 產生，非測試手填：seq 升冪、分頁第二頁 seq 皆大於第一頁最後一筆、只回傳指定 trade_id 的事件（不洩漏其他 trade 的事件）、未知 trade_id 回 `undefined`、格式錯誤 cursor 拋 `MalformedCursorError`）。`server.ts` 的 `/api/paper/trades/:trade_id/events` 分支（task 2.1 commit 已加入骨架）現由本測試涵蓋。
 
 ## 4. 收尾
 
