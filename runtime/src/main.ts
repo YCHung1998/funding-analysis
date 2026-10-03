@@ -296,26 +296,31 @@ export async function runStartup(deps: StartupDeps): Promise<StartupResult> {
  * Schedules `HealthPublisher.publish` every `healthConfig.publishIntervalMs`
  * via the injected `Clock` (never `setInterval` directly — see this file's
  * header comment). Returns a `stop()` to cancel, mirroring
- * `Reconciler.start()/stop()`.
+ * `Reconciler.start()/stop()`. Re-validates credentials on every tick
+ * (rather than freezing whatever `runStartup` saw once) so a credential
+ * that goes from PRESENT to INVALID/MISSING after startup — or the reverse —
+ * is reflected in Health without requiring a Runtime restart.
  */
 export function startPeriodicHealthPublish(deps: StartupDeps): { stop(): void } {
   let handle: ReturnType<Clock['after']> | null = null;
   const tick = (): void => {
-    deps.healthPublisher.publish(
-      deriveHealth({
-        engine: 'RUNNING',
-        exchanges: deps.buildExchangeHealth(),
-        scanner: (deps.scanner.status() === 'STOPPED' ? 'STOPPED' : 'RUNNING') satisfies ScannerStatus,
-        risk: 'ARMED',
-        paperExecution: deps.paperExecutionArm.isArmed() ? 'ARMED' : 'DISARMED',
-        database: 'HEALTHY',
-        clock: 'RELIABLE',
-        credentials: 'PRESENT',
-        entryHalted: deps.entryHalt.isHalted(),
-        haltReasons: deps.entryHalt.reasons().map((r) => r.reason),
-        lastEventAt: deps.clock.now(),
-      }),
-    );
+    void deps.credentials.validate().then((credentials) => {
+      deps.healthPublisher.publish(
+        deriveHealth({
+          engine: 'RUNNING',
+          exchanges: deps.buildExchangeHealth(),
+          scanner: (deps.scanner.status() === 'STOPPED' ? 'STOPPED' : 'RUNNING') satisfies ScannerStatus,
+          risk: 'ARMED',
+          paperExecution: deps.paperExecutionArm.isArmed() ? 'ARMED' : 'DISARMED',
+          database: 'HEALTHY',
+          clock: 'RELIABLE',
+          credentials: credentials.status,
+          entryHalted: deps.entryHalt.isHalted(),
+          haltReasons: deps.entryHalt.reasons().map((r) => r.reason),
+          lastEventAt: deps.clock.now(),
+        }),
+      );
+    });
     handle = deps.clock.after(deps.healthConfig.publishIntervalMs, tick);
   };
   handle = deps.clock.after(deps.healthConfig.publishIntervalMs, tick);

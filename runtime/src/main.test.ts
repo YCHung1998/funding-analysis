@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { VirtualClock } from './clock/virtualClock';
 import { HealthPublisher, readRuntimeHealthRow } from './health/healthPublisher';
-import { runStartup, type StartupDeps } from './main';
+import { runStartup, startPeriodicHealthPublish, type StartupDeps } from './main';
 import { EntryHaltLatch } from './reconciliation/entryHalt';
 import { Reconciler } from './reconciliation/reconciler';
 import { DEFAULT_RECONCILIATION_CONFIG } from './reconciliation/types';
@@ -246,5 +246,28 @@ describe('runStartup (design.md Decision 4, tasks.md 4.1)', () => {
     const result = await runStartup(harness.deps);
     expect(result.recovery).toBeDefined();
     expect(result.recovery!.projectionMismatches).toBe(0);
+  });
+});
+
+describe('startPeriodicHealthPublish', () => {
+  it('re-validates credentials on every tick instead of freezing a stale status', async () => {
+    const harness = buildHarness({
+      credentials: { validate: async () => ({ status: 'MISSING', withdrawPermissionGranted: false }) },
+    });
+    await runStartup(harness.deps);
+
+    // Startup saw MISSING; now credentials become available (e.g. an operator supplied them after boot).
+    harness.deps.credentials = { validate: async () => ({ status: 'PRESENT', withdrawPermissionGranted: false }) };
+
+    const periodic = startPeriodicHealthPublish(harness.deps);
+    harness.clock.advanceTo(harness.deps.healthConfig.publishIntervalMs);
+    await Promise.resolve(); // let the tick's `credentials.validate()` promise settle
+    await Promise.resolve();
+
+    const row = readRuntimeHealthRow(harness.db);
+    const model = JSON.parse(row!.components) as { credentials: string };
+    expect(model.credentials).toBe('PRESENT');
+
+    periodic.stop();
   });
 });
