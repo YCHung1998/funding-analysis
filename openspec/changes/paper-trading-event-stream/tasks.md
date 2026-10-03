@@ -46,8 +46,21 @@
 
 ## 2. REST 補抓端點
 
-- [ ] 2.1 `getEventsAfter(afterSeq, limit)` + `GET /api/paper/events?after_seq=&limit=`：無
-      `next_cursor`、預設 `after_seq=0`、`limit=500`
+- [x] 2.1 `getEventsAfter(afterSeq, limit)` + `GET /api/paper/events?after_seq=&limit=`：無
+      `next_cursor`、預設 `after_seq=0`、`limit=500`。證據：`server/paperReadLayer.ts`（`getEventsAfter`：
+      `SELECT * FROM trading_events WHERE seq > ? ORDER BY seq ASC LIMIT ?`，重用既有的
+      `TradingEventRow`/`rowToTradingEvent`/`selectAll`，回傳 `{ items }`，無 `next_cursor` 欄位——與
+      `contracts.ts` 的 `GlobalEventsResponse` 完全一致，design.md Decision 3 明文的「四個分頁形狀回應中
+      唯一沒有 cursor 欄位的」；函式本體已隨 task 1.2 commit 寫出（`paperEventTailer.ts` 的輪詢直接重用
+      同一個查詢，design.md Decision 3「重用，不重寫查詢」），本 task 新增的是其測試與 REST 路由本身）、
+      `server/paperReadLayer.eventsAfter.test.ts`（5 tests：`after_seq=5` 時回傳 seq 6-10、`after_seq`
+      等於目前最大 seq 時回傳空陣列、`after_seq=0` 等同抓全部（up to limit）、`limit` 確實截斷筆數、跨
+      多個 trade 的事件全域混合回傳且仍照 seq 升冪（驗證「全域事件補抓，不是單一 trade」））。
+      **`server.ts`**：新增 `GET /api/paper/events?after_seq=&limit=` 路由（沿用既有四條 Paper Trading
+      路由同一套 `openPaperReadDb`/`PaperReadLayerUnavailableError → 503` 慣例；`after_seq` 預設 `0`、
+      `limit` 預設 `500`，皆用 `Number.parseInt` + `Number.isFinite` 防呆，仿照既有 `scope=completed` 的
+      `limit` 解析寫法）。未修改既有 9 條路由的行為，未新增路由層級的獨立測試（與既有四條 Paper Trading
+      路由同例——路由本身是薄包裝，邏輯都在 `paperReadLayer.ts` 的函式測試裡，手動驗證見 task 4.1）。
 
 ## 3. WebSocket Gateway
 

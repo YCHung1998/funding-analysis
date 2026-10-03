@@ -22,6 +22,7 @@ import {
   getAccountSnapshot,
   getCompletedTrades,
   getCurrentTrades,
+  getEventsAfter,
   getTradeDetail,
   getTradeEvents,
   MalformedCursorError,
@@ -766,6 +767,36 @@ app.get('/api/paper/trades/:trade_id/events', (req, res) => {
     }
     console.error('[paper-trading-read-api] /api/paper/trades/:trade_id/events failed:', err);
     return res.status(500).json({ error: 'TRADE_EVENTS_READ_FAILED' });
+  } finally {
+    reader?.close();
+  }
+});
+
+// --- paper-trading-event-stream wiring (task 2.1) ---------------------------
+// 唯讀全域事件補抓端點（design.md Decision 3）：沿用 `paper-trading-read-api` 同一套
+// `openPaperReadDb`/`PaperReadLayerUnavailableError` → 503 慣例。無 `next_cursor`
+// （與 contracts.ts 的 `GlobalEventsResponse` 一致）——呼叫端以 `after_seq = <已收到的最大 seq>`
+// 重新呼叫來補抓下一批，`seq` 本身即是續抓游標。
+
+/**
+ * GET /api/paper/events?after_seq=&limit=
+ * A-9：全域（跨 trade）事件補抓，`seq` 升冪，預設 `after_seq=0`、`limit=500`。
+ */
+app.get('/api/paper/events', (req, res) => {
+  const reader = openPaperReadDb(PAPER_DB_PATH);
+  try {
+    const afterSeqParam = typeof req.query.after_seq === 'string' ? Number.parseInt(req.query.after_seq, 10) : 0;
+    const afterSeq = Number.isFinite(afterSeqParam) && afterSeqParam >= 0 ? afterSeqParam : 0;
+    const limitParam = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : 500;
+    const limit = Number.isFinite(limitParam) && limitParam > 0 ? limitParam : 500;
+    const page = getEventsAfter(reader, afterSeq, limit);
+    return res.json(page);
+  } catch (err) {
+    if (err instanceof PaperReadLayerUnavailableError) {
+      return res.status(503).json({ error: err.message });
+    }
+    console.error('[paper-trading-event-stream] /api/paper/events failed:', err);
+    return res.status(500).json({ error: 'EVENTS_READ_FAILED' });
   } finally {
     reader?.close();
   }
