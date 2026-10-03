@@ -30,6 +30,9 @@ import {
   PaperReadLayerUnavailableError,
 } from './server/paperReadLayer';
 import { resolveKlinesSymbol } from './server/liveKlinesResolve';
+import { WebSocketServer } from 'ws';
+import { PaperEventTailer, getCurrentMaxSeq } from './server/paperEventTailer';
+import { PaperWsGateway, type GatewaySocket } from './server/paperWsGateway';
 import { InstrumentRegistry } from './runtime/src/market/instruments/registry';
 import { UpstreamError } from './runtime/src/market/http/publicRestClient';
 import { GuardedRestClient } from './runtime/src/market/http/guardedRestClient';
@@ -802,6 +805,51 @@ app.get('/api/paper/events', (req, res) => {
   }
 });
 
+// --- paper-trading-event-stream wiring (task 3.1/3.2) -----------------------
+// WebSocket `/ws/paper`（A-10）：task 1.1 spike 已確認 Vite dev middleware（`middlewareMode:
+// true`）的 HMR WebSocket 跑在自己獨立的內部 http server 上，從不對 `app.listen()` 建出的
+// http.Server 註冊 `'upgrade'` 監聽——下面這段可以安全地自行處理 `/ws/paper` 的 upgrade，
+// 不會與 Vite HMR 衝突。`PaperWsGateway` 只做連線登記/轉發/backpressure；真正偵測「有新資料」
+// 的輪詢邏輯在 `PaperEventTailer`（task 1.2），兩者透過 broadcastEvent/broadcastHealth 回呼相接
+// ——全部連線共用同一個輪詢迴圈（design.md Decision 1），不是每個連線各自輪詢一次。
+const EVENT_TAIL_POLL_INTERVAL_MS = Number(process.env.EVENT_TAIL_POLL_INTERVAL_MS) || 250;
+const EVENT_STREAM_QUEUE_LIMIT = Number(process.env.EVENT_STREAM_QUEUE_LIMIT) || 1000;
+
+const paperWsGateway = new PaperWsGateway({ queueLimit: EVENT_STREAM_QUEUE_LIMIT });
+const paperWss = new WebSocketServer({ noServer: true });
+
+paperWss.on('connection', (socket) => {
+  const reader = openPaperReadDb(PAPER_DB_PATH);
+  let helloLastSeq = 0;
+  try {
+    if (reader) helloLastSeq = getCurrentMaxSeq(reader);
+  } finally {
+    reader?.close();
+  }
+  paperWsGateway.handleConnection(socket as unknown as GatewaySocket, helloLastSeq);
+});
+
+function startingLastSeq(): number {
+  const reader = openPaperReadDb(PAPER_DB_PATH);
+  try {
+    return reader ? getCurrentMaxSeq(reader) : 0;
+  } finally {
+    reader?.close();
+  }
+}
+
+const paperEventTailer = new PaperEventTailer({
+  openReader: () => openPaperReadDb(PAPER_DB_PATH),
+  onEvents: (events) => {
+    for (const event of events) paperWsGateway.broadcastEvent(event.seq, event);
+  },
+  onHealth: (health) => paperWsGateway.broadcastHealth(health),
+  now: () => clock.now(),
+  healthStaleThresholdMs: HEALTH_STALE_THRESHOLD_MS,
+  initialLastSeq: startingLastSeq(),
+  onError: (err, scope) => console.error(`[paper-trading-event-stream] tailer poll (${scope}) failed:`, err),
+});
+
 async function start() {
   // 非阻塞啟動刷新（design.md Decision 9 第 2 點）：app.listen 不等待註冊表就緒。
   refreshRegistry().catch(err => console.error('[instrument-registry] initial refresh failed:', err));
@@ -833,9 +881,25 @@ async function start() {
     }
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[5-Exchange Arbitrage Engine] Server listening on port ${PORT}`);
   });
+
+  // `/ws/paper`（A-10, task 3.1）：自行處理 upgrade，不經過 Vite（task 1.1 spike 結論——
+  // Vite dev middleware 的 HMR WebSocket 用自己獨立的內部 http server，不會碰這個 httpServer
+  // 的 'upgrade' 事件）。非此路徑的 upgrade 請求一律 destroy（本專案目前沒有其他 WS 端點）。
+  httpServer.on('upgrade', (req, socket, head) => {
+    const { pathname } = new URL(req.url ?? '', 'http://localhost');
+    if (pathname === '/ws/paper') {
+      paperWss.handleUpgrade(req, socket, head, (ws) => paperWss.emit('connection', ws, req));
+    } else {
+      socket.destroy();
+    }
+  });
+
+  setInterval(() => {
+    paperEventTailer.pollOnce();
+  }, EVENT_TAIL_POLL_INTERVAL_MS);
 }
 
 start().catch(err => {

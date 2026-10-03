@@ -64,7 +64,38 @@
 
 ## 3. WebSocket Gateway
 
-- [ ] 3.1 `server/paperWsGateway.ts`：連線時送 `hello`（含當前最大 `seq`）、新事件轉發 `{type:'event'}`、
-      health 變化轉發 `{type:'health'}`、忽略任何入站應用層訊息
-- [ ] 3.2 Backpressure：每連線上限 1000 筆佇列、超過即關閉該連線且不影響其他連線；關閉後重連 + A-9
-      補抓涵蓋所有遺漏事件的端對端測試
+- [x] 3.1 `server/paperWsGateway.ts`：連線時送 `hello`（含當前最大 `seq`）、新事件轉發 `{type:'event'}`、
+      health 變化轉發 `{type:'health'}`、忽略任何入站應用層訊息。證據：`server/paperWsGateway.ts`
+      （`PaperWsGateway`：`handleConnection(socket, helloLastSeq)` 送出 `hello` 並登記連線、
+      `broadcastEvent(seq, event)`/`broadcastHealth(health)` 轉發給所有連線（`paperEventTailer` 的
+      `onEvents`/`onHealth` 回呼接到這兩個方法，見下方 `server.ts` 段落）、`socket.on('message', () =>
+      {})` 完全忽略任何入站訊息（不解析、不回應，符合 A-10「server 只轉發，不保證送達」且
+      `usePaperEventStream.ts` 從不送出任何應用層訊息）、`GatewaySocket` 介面只要求
+      `send`/`close`/`on('message'|'close')`，測試用假 socket 即可驅動、不需真實網路或計時器）、
+      `server/paperWsGateway.test.ts`（見 3.2，同一測試檔涵蓋 hello/event/health 轉發、入站訊息忽略、
+      連線關閉後從登記表移除，與 backpressure）。**`server.ts`**：新增 `ws` 的
+      `WebSocketServer({ noServer: true })`、在 `app.listen()` 回傳的 http.Server 上掛 `'upgrade'`
+      監聽器，路徑比對 `/ws/paper`（task 1.1 spike 已證實這與 Vite dev middleware 的 HMR WebSocket
+      互不衝突，兩者是不同的 server 實例；非 `/ws/paper` 的 upgrade 一律 `socket.destroy()`）；連線時
+      開一個唯讀連線算當前最大 seq 當 `hello` 的 `last_seq`（用完即關閉，沿用既有 per-request 慣例）；
+      啟動 `PaperEventTailer` 的輪詢（`setInterval(() => paperEventTailer.pollOnce(),
+      EVENT_TAIL_POLL_INTERVAL_MS)`，預設 250ms、可用環境變數覆寫，design.md Decision 1）、
+      `onEvents`/`onHealth` 接到 `paperWsGateway.broadcastEvent`/`broadcastHealth`；啟動時以
+      `getCurrentMaxSeq` 算 `initialLastSeq`，避免伺服器重啟時把歷史事件全部重播給所有連線（design.md
+      Decision 2：WS 只轉發「連線當下之後」的新事件，補抓交給 A-9）。未修改既有 9 條路由或 2 個
+      health/reconciliation 路由的行為。
+- [x] 3.2 Backpressure：每連線上限 1000 筆佇列、超過即關閉該連線且不影響其他連線；關閉後重連 + A-9
+      補抓涵蓋所有遺漏事件的端對端測試。證據：`server/paperWsGateway.ts`（`deliver()`：用 `pending`
+      計數器追蹤「已 `send()` 但 flush callback 尚未觸發」的訊息數，`pending >= queueLimit`（預設
+      1000，可經 `PaperWsGatewayOptions`/環境變數 `EVENT_STREAM_QUEUE_LIMIT` 注入）時關閉該連線（WS
+      code 1008 "Policy Violation"）而不送這筆訊息，其他連線不受影響——`broadcast()` 對連線集合的
+      **快照**逐一呼叫 `deliver`，一個連線在迴圈中途被關閉不影響對其餘連線繼續 `deliver`）、
+      `server/paperWsGateway.test.ts`（7 tests：hello 送出正確 `last_seq`、event 轉發給所有連線、
+      health 轉發給所有連線、入站訊息被忽略（送訊息後無任何回呼觸發、連線不受影響）、連線關閉後從
+      登記表移除且後續 broadcast 不丟例外、**慢速消費者（`flushMode:'never'` 的假 socket，send
+      callback 永不觸發 → `pending` 只增不減）在佇列滿後被關閉、`fast` 連線同時收到全部 3 筆
+      broadcast 不受影響**（`queueLimit: 3` 加速測試）、**端對端：慢速連線在佇列滿後被強制斷線，之後
+      用它最後一次「真正收到」的 seq 呼叫 `getEventsAfter`（重用 task 2.1 的函式，等同真實
+      reconnect 時打 `GET /api/paper/events?after_seq=`）補抓，斷言補抓回來的 `seq` 清單恰好等於斷線
+      期間全部遺漏的事件，一筆不漏、一筆不多**（fixture DB 真實寫入 5 筆事件，`queueLimit: 2`
+      加速斷線時機））。
