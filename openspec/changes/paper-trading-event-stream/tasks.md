@@ -99,3 +99,26 @@
       reconnect 時打 `GET /api/paper/events?after_seq=`）補抓，斷言補抓回來的 `seq` 清單恰好等於斷線
       期間全部遺漏的事件，一筆不漏、一筆不多**（fixture DB 真實寫入 5 筆事件，`queueLimit: 2`
       加速斷線時機））。
+
+## 4. 收尾
+
+- [x] 4.1 執行 `npm run lint`、`npm run build`、`npm test`、`openspec validate paper-trading-event-stream --strict`
+      全數通過並附輸出；以 fixture DB + 真實 `ws` 客戶端手動連線驗證 hello/event/health 三種訊息；更新
+      HANDOFF §7 交接紀錄（註明 Open Question 1 的 spike 結論、`runtime_health` 依賴現況）。證據：
+      `npm run lint` 無輸出通過；`npm run build` 1721 modules，✓ built in ~257-673ms（多次執行數值略有
+      浮動，皆成功）；`npm test` **175 個測試檔、1410 個測試全過**（起始基準 172 檔/1392 測試，本次淨增
+      3 個測試檔共 18 個測試：`paperEventTailer.test.ts` 6、`paperReadLayer.eventsAfter.test.ts` 5、
+      `paperWsGateway.test.ts` 7）；`npx openspec validate paper-trading-event-stream --strict` →
+      `Change 'paper-trading-event-stream' is valid`。實際手動驗證：建一個獨立的最小 express+http 驗證
+      腳本（刻意不啟動完整 `server.ts`，避免其啟動流程對 5 個真實交易所發出 REST 請求——符合「不打任何
+      真實 API」的硬性專案規則），掛載與 `server.ts` 完全相同的 `PaperEventTailer`/`PaperWsGateway`/
+      `openPaperDb`/`getEventsAfter` 模組，DB 為 temp-dir SQLite fixture（001-004 migrations，真實
+      `EventStore`/`HealthPublisher` 寫入），用真實 `ws` 套件的 `WebSocket` 客戶端連線，依序實際觀察到
+      `{"type":"hello","last_seq":1}` → `{"type":"event","seq":2,"event":{...}}`（連線後即時 append 的
+      事件，輪詢偵測到並推播）→ `{"type":"health","health":{"engine":"RUNNING",...,"credentials":
+      "PRESENT","entry_allowed":true}}`（即時 publish 的健康列，輪詢偵測到 `updated_at` 變化並推播）；
+      另送一筆入站應用層訊息確認伺服器無回應/不崩潰（A-10 send-only）；並以 `getEventsAfter(reader, 0,
+      500)` 確認兩筆事件皆可透過補抓端點取回。驗證腳本與暫存 DB 已刪除，未入版控（`git status` 確認乾淨）。
+      `assets/HANDOFF.md` §7 新增一筆（2026-10-03（6）），`git diff --stat` 確認 `63 insertions(+)`、
+      `0 deletions(-)`，純新增於既有最上方條目（（4）paper-trading-read-api）之前，未修改或刪除任何既有
+      內容（`git diff | grep '^-'` 僅剩 diff header，無任何既有行被改動）。

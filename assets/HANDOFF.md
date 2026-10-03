@@ -192,6 +192,69 @@ B12–B17 每一步：先寫特性測試鎖住現況 → 遷移 → `npm run che
 - **需要使用者決定的事**：<沒有就寫「無」>
 ```
 
+### 2026-10-03（6）— Claude Sonnet 5，`paper-trading-event-stream`（分支 `feature-paper-trading-event-stream`，來自 `integration/wave3` commit `d29d0b4`）
+- **做了什麼**：實作 OpenSpec change `paper-trading-event-stream` 全部 6 項 task（Task Group 1–4），補齊
+  `paper-trading-ui` 的 `usePaperEventStream.ts`（A-9/A-10）一直缺的伺服器端：
+  - 1.1 Spike（design.md Open Question 1）：讀 Vite 8 原始碼（`node_modules/vite/dist/node/chunks/node.js`
+    `_createServer`）確認 `middlewareMode: true` 時傳給 `createWebSocketServer` 的 `httpServer` 為 `null`，
+    因此 Vite 的 HMR WebSocket 永遠跑在自己獨立的內部 http server（預設 port 24678），完全不會對
+    `app.listen()` 建出的 http.Server 註冊 `'upgrade'` 監聽器；以實際腳本（express + vite middlewareMode +
+    自行掛 `ws` upgrade handler）驗證無誤。**結論：`server.ts` 自行在共用 http.Server 上掛 `/ws/paper` 的
+    `'upgrade'` 監聽器是安全的，不會與 Vite dev middleware 衝突。**
+  - 1.2 `server/paperEventTailer.ts`：輪詢 `trading_events`（`seq > last_broadcast_seq`，重用 2.1 的
+    `getEventsAfter`）與 `runtime_health`（`updated_at` 變化，重用 `runtime-health-reconciliation` 的
+    `healthPublisher.ts` 讀取側函式）；`runtime_health` 表不存在時，event 推播路徑完全不受影響（已寫測試
+    證明）；無內部 timer，`pollOnce()` 由呼叫端（`server.ts` 的 `setInterval`）驅動，測試不依賴真實等待。
+  - 2.1 `getEventsAfter(afterSeq, limit)` + `GET /api/paper/events?after_seq=&limit=`：無 `next_cursor`
+    （與 `GlobalEventsResponse` 契約一致）、預設 `after_seq=0`、`limit=500`。
+  - 3.1 `server/paperWsGateway.ts` + `GET`-旁的 `WebSocket /ws/paper`：連線送 `hello`（含當前最大
+    `seq`）、事件/health 變化轉發、忽略任何入站應用層訊息（A-10「server 只轉發，不保證送達」）。
+  - 3.2 Backpressure：每連線上限 1000 筆佇列（`pending` 計數器追蹤未 flush 的 `send()`），超過即關閉該
+    連線（WS code 1008）且不影響其他連線；端對端測試證明斷線後以 `getEventsAfter` 補抓涵蓋所有遺漏事件。
+  - `server.ts`：只新增 `GET /api/paper/events` 與 `/ws/paper` 的 upgrade 掛載，未修改既有 9 條路由行為。
+- **驗證證據**：
+  - 每項任務皆先寫失敗測試再實作（`paperEventTailer.test.ts` 6 個、`paperReadLayer.eventsAfter.test.ts`
+    5 個、`paperWsGateway.test.ts` 7 個，共新增 18 個測試，每個 commit 前皆確認紅燈後轉綠）。
+  - `npm run lint`（`tsc --noEmit`）→ 無輸出，通過。
+  - `npm run build`（vite build）→ 1721 modules transformed，✓ built in ~260ms。
+  - `npm test`（`vitest run`）→ **175 個測試檔、1410 個測試全過**（起始基準 172 檔/1392 測試，本次淨增
+    3 個測試檔、18 個測試）。
+  - `npx openspec validate paper-trading-event-stream --strict` → `Change 'paper-trading-event-stream' is
+    valid`。
+  - 以 fixture DB（temp-dir SQLite，001–004 migrations，透過真實 `EventStore`/`HealthPublisher` 寫入；
+    **非真實交易所資料，未打任何真實交易所 API**）+ 真實 `ws` 客戶端手動連線驗證：掛載與 `server.ts` 相同
+    的 `PaperEventTailer`/`PaperWsGateway`/`openPaperDb`/`getEventsAfter` 模組於一個獨立的最小
+    express+http 伺服器上（刻意不啟動完整 `server.ts`，避免其啟動流程對 5 個真實交易所發出 REST 請求）。
+    實際觀察到的訊息序列（依序）：
+    1. `{"type":"hello","last_seq":1}`（連線當下 `trading_events` 已有 1 筆種子事件）
+    2. `{"type":"event","seq":2,"event":{"seq":2,"event_id":"live-1","event_type":"TRADE_STATUS_CHANGED",...}}`
+       （連線後即時 append 的新事件，輪詢偵測到並推播）
+    3. `{"type":"health","health":{"engine":"RUNNING","exchanges":[],"market_data":"HEALTHY",...,
+       "credentials":"PRESENT","entry_allowed":true,"entry_block_reasons":[]}}`（即時 publish 的健康列，
+       輪詢偵測到 `updated_at` 變化並推播）
+    另外送出一筆入站應用層訊息（`{"type":"control","command":"NOOP"}`）確認伺服器無任何回應或崩潰（符合
+    A-10 send-only）；並以 `getEventsAfter(reader, 0, 500)` 確認兩筆事件皆可透過補抓端點取回。驗證腳本與
+    暫存 DB 已刪除，未入版控。
+- **沒做完 / 已知問題**：
+  - `runtime_health` 依賴現況：`runtime-health-reconciliation` 已在 `integration/wave3`（本次分支的基底
+    commit `d29d0b4`）合併完成，`runtime_health` 表在真實環境中必然存在，故本次的「表不存在時 event 路徑
+    不受影響」只在本地測試（刻意用 migration001-only fixture）與理論上的部分套用情境（如直接對一個只跑過
+    部分 migration 的 DB 檔案連線）才會真正發生；已照 design.md Risk 寫測試證明，非臆測。
+  - design.md Open Question 2（Auth/session model）仍未決定，本次沿用現狀（任何能連到這個 port 的人都能
+    看 live event/health stream），與 `paper-trading-read-api`/`runtime-health-reconciliation` 的 Open
+    Question 1 相同，留給 Kill Switch 工作決定。
+  - 250ms 輪詢間隔、1000 筆 backpressure 上限皆可用環境變數（`EVENT_TAIL_POLL_INTERVAL_MS`/
+    `EVENT_STREAM_QUEUE_LIMIT`）覆寫，尚未有任何真實負載下的調校數據——design.md Decision 1/4 已說明這是
+    保守預設，非最終值。
+- **下一步建議**：
+  1. 真實瀏覽器 + 真實 Runtime 的端對端手動驗證（`npm run dev` + `npm run runtime`，開 Paper Trading UI
+     的 Event Stream 面板）：本次僅驗證到 fixture DB + 真實 `ws` 客戶端這一層，尚未在真實瀏覽器環境下觀察
+     `usePaperEventStream.ts` 實際消費這三種訊息的畫面表現。
+  2. Kill Switch 工作決定 Auth/session model 後，`/ws/paper` 這個新增的連線面需要一併納入保護範圍。
+  3. 若未來觀察到 250ms 輪詢在真實負載下太粗或太細，`EVENT_TAIL_POLL_INTERVAL_MS` 已可直接調整，不需改碼。
+- **需要使用者決定的事**：無新增；舊的非框架待定項（最低流動性門檻、`slippage_safety_buffer_pct`、
+  `basis_sigma_pct`、`DEFAULT_FEE_TABLE` 官方查證、`research_min_net_pnl_usdt`）持續提醒，不影響本次交付。
+
 ### 2026-10-03（4）— Claude Sonnet 5，`paper-trading-read-api`（分支 `feature-paper-trading-read-api`，來自 `integration/wave3` commit `4a23caf`）
 - **做了什麼**：實作 OpenSpec change `paper-trading-read-api` 全部 6 項 task（Task Group 1–4）：
   - 1.1 `server/paperReadLayer.ts`：`new DatabaseSync(dbPath, { readOnly: true })`（`openPaperDb`）、`getAccountSnapshot()`（latest by `created_at`）、`PaperReadLayerUnavailableError` 統一處理 DB/表不存在與無資料列兩種情況（→ 503）。
